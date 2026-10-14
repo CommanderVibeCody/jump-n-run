@@ -7,7 +7,8 @@ If there is no audio device (or numpy / the mixer is unavailable) the
 from __future__ import annotations
 
 import math
-from typing import Dict, Optional
+import sys
+from typing import Dict, List, Optional
 
 import pygame
 
@@ -198,25 +199,80 @@ def synthesize_music(seed: int = 3, bpm: float = 124.0):
     return _normalize(out, 0.8)
 
 
-def to_sound(samples, volume: float = 1.0):
-    """Convert a mono float array into a pygame Sound matching the mixer format."""
-    freq, size, channels = pygame.mixer.get_init()
+def warn(message: str) -> None:
+    """Audio problems are printed, never silently swallowed."""
+    print(f"[jump-n-run audio] {message}", file=sys.stderr, flush=True)
+
+
+def to_array(samples, mixer_format, volume: float = 1.0):
+    """Convert mono float samples (-1..1, SAMPLE_RATE) into an array that
+    matches the mixer exactly: frequency, sample format and channel count."""
+    freq, size, channels = mixer_format
+    samples = np.asarray(samples, dtype=np.float64)
     if freq != SAMPLE_RATE:  # resample by linear interpolation
-        n = int(len(samples) * freq / SAMPLE_RATE)
+        n = max(1, int(round(len(samples) * freq / SAMPLE_RATE)))
         samples = np.interp(np.linspace(0, len(samples) - 1, n), np.arange(len(samples)), samples)
     data = np.clip(samples * volume, -1.0, 1.0)
-    if size in (8, -8):
-        if size == 8:
-            arr = ((data * 127) + 128).astype(np.uint8)
-        else:
-            arr = (data * 127).astype(np.int8)
-    elif abs(size) == 32:
-        arr = (data * 2147483647 * 0.9).astype(np.int32) if size < 0 else data.astype(np.float32)
+    if size == 8:
+        arr = np.round(data * 127 + 128).astype(np.uint8)
+    elif size == -8:
+        arr = np.round(data * 127).astype(np.int8)
+    elif size == 16:
+        arr = np.round(data * 32767 + 32768).astype(np.uint16)
+    elif size == -16:
+        arr = np.round(data * 32767).astype(np.int16)
+    elif abs(size) == 32:  # pygame reports 32-bit float output as 32 or -32
+        arr = data.astype(np.float32)
     else:
-        arr = (data * 32767).astype(np.int16)
+        raise ValueError(f"unsupported mixer sample size {size}")
     if channels > 1:
         arr = np.repeat(arr[:, None], channels, axis=1)
-    return pygame.sndarray.make_sound(np.ascontiguousarray(arr))
+    return np.ascontiguousarray(arr)
+
+
+def to_sound(samples, volume: float = 1.0):
+    """Convert a mono float array into a pygame Sound matching the mixer format."""
+    fmt = pygame.mixer.get_init()
+    if not fmt:
+        raise RuntimeError("mixer is not initialised")
+    return pygame.sndarray.make_sound(to_array(samples, fmt, volume))
+
+
+def sound_peak(sound) -> float:
+    """Peak amplitude of a Sound as a fraction of full scale (0 = silent)."""
+    arr = pygame.sndarray.array(sound)
+    if arr.size == 0:
+        return 0.0
+    fmt = pygame.mixer.get_init()
+    size = fmt[1] if fmt else -16
+    a = arr.astype(np.float64)
+    if size == 8:
+        a = (a - 128) / 127
+    elif size == 16:
+        a = (a - 32768) / 32767
+    elif size == -8:
+        a = a / 127
+    elif size == -16:
+        a = a / 32767
+    return float(np.max(np.abs(a)))
+
+
+def init_mixer() -> Optional[tuple]:
+    """Initialise the mixer, trying the preferred format first and then the
+    device default. Returns the actual format or None (with warnings)."""
+    if pygame.mixer.get_init():
+        return pygame.mixer.get_init()
+    errors: List[str] = []
+    for args in ((SAMPLE_RATE, -16, 2, 512), (44100, -16, 2, 1024), ()):
+        try:
+            pygame.mixer.init(*args)
+            fmt = pygame.mixer.get_init()
+            if fmt:
+                return fmt
+        except Exception as exc:
+            errors.append(f"mixer.init{args}: {exc}")
+    warn("could not initialise the mixer: " + "; ".join(errors or ["unknown error"]))
+    return None
 
 
 _CACHE: Dict[str, object] = {}
@@ -232,34 +288,73 @@ class Audio:
         self.music: Optional["pygame.mixer.Sound"] = None
         self.music_channel = None
         self.error: Optional[str] = None
+        self.format = None
         self.time = 0.0
         self._last_played: Dict[str, float] = {}
         if enable:
             self._init()
 
     def _init(self) -> None:
+        if np is None:
+            self._disable("numpy is not installed (pip install -r requirements.txt)")
+            return
         try:
-            if np is None:
-                raise RuntimeError("numpy is not installed")
-            if not pygame.mixer.get_init():
-                pygame.mixer.init(SAMPLE_RATE, -16, 2, 512)
+            fmt = init_mixer()
+        except Exception as exc:
+            fmt = None
+            warn(f"mixer error: {exc}")
+        if not fmt:
+            self._disable("no audio device / mixer unavailable")
+            return
+        try:
             pygame.mixer.set_num_channels(32)
             pygame.mixer.set_reserved(1)
             if "sounds" not in _CACHE:
                 _CACHE["sounds"] = synthesize_sounds()
                 _CACHE["music"] = synthesize_music()
-            fmt = pygame.mixer.get_init()
             key = ("converted", fmt)
             if key not in _CACHE:
-                _CACHE[key] = ({name: to_sound(data) for name, data in _CACHE["sounds"].items()},
-                               to_sound(_CACHE["music"]))
+                sounds = {}
+                for name, data in _CACHE["sounds"].items():
+                    try:
+                        sounds[name] = to_sound(data)
+                    except Exception as exc:  # one broken sound must not kill all audio
+                        warn(f"could not build sound {name!r} for mixer format {fmt}: {exc}")
+                music = None
+                try:
+                    music = to_sound(_CACHE["music"])
+                except Exception as exc:
+                    warn(f"could not build the music loop for mixer format {fmt}: {exc}")
+                _CACHE[key] = (sounds, music)
             self.sounds, self.music = _CACHE[key]
+            if not self.sounds:
+                self._disable(f"no sound could be built for mixer format {fmt}")
+                return
+            if sound_peak(self.sounds["pistol"]) < 0.05:
+                warn(f"generated sounds are silent for mixer format {fmt} - please report this")
             self.music_channel = pygame.mixer.Channel(MUSIC_CHANNEL)
             self.enabled = True
-        except Exception as exc:  # no device, dummy driver problems, missing numpy ...
-            self.enabled = False
-            self.error = str(exc)
-            self.sounds = {}
+            self.format = fmt
+        except Exception as exc:
+            self._disable(f"{type(exc).__name__}: {exc}")
+
+    def _disable(self, reason: str) -> None:
+        self.enabled = False
+        self.error = reason
+        self.sounds = {}
+        warn(f"audio disabled, the game runs without sound ({reason}). Run 'python main.py --audio-test' for details.")
+
+    def info(self) -> str:
+        fmt = pygame.mixer.get_init()
+        driver = None
+        try:
+            import os
+            driver = os.environ.get("SDL_AUDIODRIVER") or "default"
+        except Exception:
+            pass
+        return (f"enabled={self.enabled} mixer={fmt} (frequency, size, channels) driver={driver} "
+                f"channels={pygame.mixer.get_num_channels() if fmt else 0} sounds={len(self.sounds)} "
+                f"music={'yes' if self.music else 'no'} error={self.error}")
 
     # ------------------------------------------------------------ control
     def update(self, dt: float) -> None:
@@ -269,7 +364,7 @@ class Audio:
     def apply_settings(self) -> None:
         if not self.enabled or self.music_channel is None:
             return
-        vol = self.settings.music_volume * 0.45
+        vol = self.settings.music_volume * 0.6
         if vol > 0 and self.music is not None:
             if not self.music_channel.get_busy():
                 self.music_channel.play(self.music, loops=-1)
@@ -289,11 +384,46 @@ class Audio:
         if self.time - last < THROTTLE.get(name, 0.0):
             return False
         self._last_played[name] = self.time
-        channel = sound.play()
-        if channel is not None:
-            channel.set_volume(vol)
-        return channel is not None
+        channel = pygame.mixer.find_channel(True)  # steal the oldest if all are busy
+        if channel is None:
+            return False
+        channel.set_volume(vol)
+        channel.play(sound)
+        return True
 
     def stop_all(self) -> None:
         if self.enabled:
             pygame.mixer.stop()
+
+
+def audio_test() -> int:
+    """``python main.py --audio-test``: print mixer info and play test sounds."""
+    import time
+    try:
+        pygame.mixer.pre_init(SAMPLE_RATE, -16, 2, 512)
+    except Exception as exc:
+        warn(f"pre_init failed: {exc}")
+    pygame.init()
+    print(f"pygame {pygame.version.ver}, SDL {'.'.join(map(str, pygame.get_sdl_version()))}, "
+          f"numpy {getattr(np, '__version__', 'missing')}")
+    settings = Settings(master_volume=1.0)
+    a = Audio(settings)
+    print(a.info())
+    if not a.enabled:
+        print("Audio is NOT working:", a.error)
+        return 1
+    for name in ("pistol", "explosion", "pickup"):
+        print(f"  {name:10s} peak={sound_peak(a.sounds[name]):.2f} length={a.sounds[name].get_length():.2f}s")
+    print("Playing a test beep, three effects and 3 s of music ...")
+    beep = to_sound(0.5 * np.sin(2 * np.pi * 440 * np.arange(int(0.5 * SAMPLE_RATE)) / SAMPLE_RATE))
+    print(f"  beep peak={sound_peak(beep):.2f}")
+    beep.play()
+    time.sleep(0.7)
+    for name in ("pistol", "explosion", "pickup"):
+        a.play(name)
+        time.sleep(0.6)
+    a.apply_settings()
+    time.sleep(3.0)
+    pygame.quit()
+    print("Done. If you heard nothing, check your system volume and output device.")
+    return 0

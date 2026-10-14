@@ -2,6 +2,7 @@
 fade transitions and runs the main loop."""
 from __future__ import annotations
 
+import sys
 from typing import Optional, Sequence
 
 import pygame
@@ -114,10 +115,10 @@ class App:
 
 
 def run() -> None:
-    try:
+    try:  # must happen before pygame.init()
         pygame.mixer.pre_init(22050, -16, 2, 512)
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[jump-n-run audio] pre_init failed: {exc}", file=sys.stderr)
     pygame.init()
     pygame.display.set_caption("Jump 'n' Run")
     screen = pygame.display.set_mode((C.SCREEN_WIDTH, C.SCREEN_HEIGHT))

@@ -120,9 +120,25 @@ explosions, grenade bounces, checkpoints, the level-complete fanfare and menu
 hover/select blips. The music is a seamless 4-bar loop (bass, arpeggio, kick,
 snare, hi-hats) at 124 BPM.
 
-If there is no audio device (for example on a server or in the headless
-tests), or numpy or the mixer is unavailable, the audio system switches
-itself off and the game runs silently.
+The sound buffers are built to match whatever format the mixer actually
+opened (sample rate, 8/16-bit integer or 32-bit float, mono or stereo), and
+each buffer is checked to be non-silent. If there is no audio device, or
+numpy or the mixer is unavailable, the game still runs and prints a warning
+starting with `[jump-n-run audio]` to the console that explains why.
+
+### No sound? Run the audio test
+
+```bash
+python main.py --audio-test
+```
+
+It prints the pygame/SDL/numpy versions and the mixer format, then plays a
+440 Hz test beep, three effects and a few seconds of music. If it reports
+`enabled=False`, the printed reason tells you what failed (most often a
+missing `numpy` – run `pip install -r requirements.txt` inside the activated
+virtual environment). If it reports `enabled=True` but you hear nothing,
+check the system volume and output device, and make sure sound is not muted
+in the game (`M`, or Settings).
 
 ## Setup and running
 

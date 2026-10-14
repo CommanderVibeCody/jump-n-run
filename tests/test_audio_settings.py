@@ -71,3 +71,54 @@ def test_settings_volume_is_clamped_and_mute_silences_everything():
     s.toggle_mute()
     s.music = False
     assert s.music_volume == 0.0 and s.sfx_volume > 0
+
+
+import numpy as np
+from game.audio import sound_peak, to_array
+
+
+@pytest.mark.parametrize("fmt", [(22050, -16, 2), (44100, -16, 2), (48000, -16, 1), (44100, 16, 2),
+                                 (22050, 8, 1), (44100, 32, 2), (44100, -32, 2), (22050, -8, 2)])
+def test_arrays_match_every_mixer_format(fmt):
+    freq, size, channels = fmt
+    data = np.sin(np.linspace(0, 200, 22050))
+    arr = to_array(data, fmt)
+    assert arr.shape[0] == pytest.approx(len(data) * freq / 22050, abs=1)
+    if channels > 1:
+        assert arr.ndim == 2 and arr.shape[1] == channels
+    else:
+        assert arr.ndim == 1
+    expected = {8: np.uint8, -8: np.int8, 16: np.uint16, -16: np.int16, 32: np.float32, -32: np.float32}[size]
+    assert arr.dtype == expected
+    centred = arr.astype(np.float64) - {8: 128, 16: 32768}.get(size, 0)
+    assert np.abs(centred).max() > 0.5 * np.abs(centred).max(initial=1)  # not silent
+    assert np.abs(centred).max() > 0
+
+
+def test_built_sounds_are_not_silent():
+    a = Audio(Settings())
+    if not a.enabled:
+        pytest.skip("no mixer available")
+    for name, snd in a.sounds.items():
+        assert sound_peak(snd) > 0.05, name
+    assert sound_peak(a.music) > 0.05
+
+
+def test_disabled_audio_prints_a_warning(monkeypatch, capsys):
+    monkeypatch.setattr(pygame.mixer, "get_init", lambda: None)
+    monkeypatch.setattr(pygame.mixer, "init", lambda *a, **k: (_ for _ in ()).throw(pygame.error("boom")))
+    Audio(Settings())
+    err = capsys.readouterr().err
+    assert "audio disabled" in err and "boom" in err
+
+
+def test_audio_test_cli_runs_headless():
+    import subprocess
+    import sys
+    import os
+    env = dict(os.environ, SDL_AUDIODRIVER="dummy", SDL_VIDEODRIVER="dummy")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out = subprocess.run([sys.executable, "main.py", "--audio-test"], cwd=root, env=env,
+                         capture_output=True, text=True, timeout=60)
+    assert "mixer=" in out.stdout
+    assert out.returncode in (0, 1)
