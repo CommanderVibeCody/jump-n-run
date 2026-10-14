@@ -128,6 +128,34 @@ def main() -> None:
     scene2.flash = 0.0
     scene2.draw(screen)
     pygame.image.save(screen, os.path.join(OUT, "night.png"))
+    # inside a two storey house (level 1) with the minimap: climb the ladder
+    scene4 = GameScene(seed=7)
+    w4 = scene4.world
+    w4.player.give_weapon("shotgun")
+    w4.player.current = "shotgun"
+    house = max(w4.level.houses, key=lambda h: h.y1 - h.y0)
+    door = next(d for d in w4.level.doors if d.tx == house.x0)
+    b = w4.player.body
+    b.x, b.y = door.tx * TILE - 40, (door.ty + door.height) * TILE - b.h
+    w4.camera.snap(b.cx, b.cy, 1)
+    ladder_x = next(x for x in range(house.x0, house.x1) if w4.level.is_ladder(x, house.y1 - 1))
+    for i in range(120 * 8):
+        target = ladder_x * TILE + TILE / 2
+        if b.bottom > (house.y1 - 4) * TILE + 1 and not w4.player.climbing:
+            inp = InputState(right=b.cx < target - 4, left=b.cx > target + 4, up=abs(b.cx - target) < 6)
+        elif w4.player.climbing:
+            inp = InputState(up=True)
+        else:
+            inp = InputState(left=True, aim=(b.cx - 200, b.cy))
+        w4.step(inp)
+        if not w4.player.climbing and b.bottom <= (house.y1 - 4) * TILE + 1 and b.cx < target - 40:
+            break
+    for _ in range(40):
+        w4.step(InputState(aim=(b.cx + 200, b.cy + 60)))
+    scene4.banner_time = 10.0
+    scene4.flash = 0.0
+    scene4.draw(screen)
+    pygame.image.save(screen, os.path.join(OUT, "house.png"))
     print("screenshots written to", os.path.abspath(OUT))
 
 

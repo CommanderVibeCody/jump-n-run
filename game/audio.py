@@ -26,7 +26,7 @@ MUSIC_CHANNEL = 0
 VOLUMES = {
     "step": 0.18, "jump": 0.35, "land": 0.4, "hover": 0.3, "select": 0.5,
     "flamethrower": 0.35, "smg": 0.45, "machinegun": 0.45, "enemy_shot": 0.35,
-    "enemy_hit": 0.5, "empty": 0.6, "bounce": 0.35,
+    "enemy_hit": 0.5, "empty": 0.6, "bounce": 0.35, "door": 0.45,
 }
 # minimum time between two plays of the same sound (seconds)
 THROTTLE = {"step": 0.12, "enemy_hit": 0.04, "flamethrower": 0.09, "bounce": 0.08, "explosion": 0.05,
@@ -147,6 +147,8 @@ def synthesize_sounds(seed: int = 7) -> Dict[str, "np.ndarray"]:
                                  * _env(_n(d * SAMPLE_RATE), 0.004, 3 if d > 0.3 else 6) for f, d in notes])
     s["hover"] = _sweep(900, 950, 0.035) * _env(_n(0.035 * SAMPLE_RATE), 0.001, 60) * 0.4
     s["select"] = _sweep(500, 1200, 0.11, "triangle") * _env(_n(0.11 * SAMPLE_RATE), 0.002, 15) * 0.5
+    s["door"] = _mix(_sweep(180, 120, 0.18, "saw") * _env(_n(0.18 * SAMPLE_RATE), 0.01, 12) * 0.3,
+                     _lowpass(_noise(0.08, rng), 8) * _env(_n(0.08 * SAMPLE_RATE), 0.001, 35))
     return {name: _normalize(data, 0.9) for name, data in s.items()}
 
 

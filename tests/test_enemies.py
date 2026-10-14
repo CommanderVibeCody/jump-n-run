@@ -1,18 +1,18 @@
 import pytest
 
 from game import constants as C
-from game.enemies import Drone, Shooter, Walker
+from game.enemies import ENEMY_TYPES, Recruit, Shooter
 from game.player import InputState
 from game.weapons import Projectile
 from helpers import make_world, settle, steps
 
 
 def test_bullets_damage_and_kill_enemies():
-    rows = ["                    ", "  P       w         ", "####################"]
+    rows = ["                    ", "  P       e         ", "####################"]
     w = make_world(rows)
     settle(w)
     enemy = w.enemies[0]
-    assert isinstance(enemy, Walker)
+    assert isinstance(enemy, Recruit)
     w.step(InputState(shoot=True))
     for _ in range(40):
         w.step()
@@ -25,11 +25,11 @@ def test_bullets_damage_and_kill_enemies():
             break
     assert not w.enemies
     assert w.kills == 1
-    assert w.score >= Walker.SCORE
+    assert w.score >= Recruit.SCORE
 
 
 def test_rocket_explosion_hits_enemies_in_radius():
-    rows = ["                    ", "  P      ww         ", "####################"]
+    rows = ["                    ", "  P      ee         ", "####################"]
     w = make_world(rows)
     settle(w)
     w.player.give_weapon("rocket")
@@ -46,7 +46,7 @@ def test_rocket_explosion_hits_enemies_in_radius():
 
 
 def test_walker_turns_around_at_ledge():
-    rows = ["                     ", "  P     w            ", "######  ####         "]
+    rows = ["     #               ", "  P  #  e            ", "######  ####         "]
     w = make_world(rows)
     walker = w.enemies[0]
     walker.facing = -1
@@ -61,7 +61,7 @@ def test_walker_turns_around_at_ledge():
 
 
 def test_walker_turns_around_at_wall():
-    rows = ["          ", "#  P  w  #", "##########"]
+    rows = ["          ", "#P#   e  #", "##########"]
     w = make_world(rows)
     walker = w.enemies[0]
     walker.facing = 1
@@ -103,13 +103,15 @@ def test_enemy_bullet_damages_player_and_grants_invulnerability():
 
 
 def test_contact_with_enemy_hurts_player():
-    rows = ["                    ", "  P  w              ", "####################"]
+    rows = ["                    ", "  P  e              ", "####################"]
     w = make_world(rows)
+    e = w.enemies[0]
+    e.body.x = w.player.body.x  # walk straight into the player before it can shoot
     for _ in range(240):
         w.step()
         if w.player.health < C.PLAYER_MAX_HEALTH:
             break
-    assert w.player.health == C.PLAYER_MAX_HEALTH - Walker.CONTACT_DAMAGE
+    assert w.player.health == C.PLAYER_MAX_HEALTH - Recruit.CONTACT_DAMAGE
 
 
 def test_stomping_an_enemy_damages_it_and_bounces():
@@ -129,12 +131,6 @@ def test_stomping_an_enemy_damages_it_and_bounces():
     assert w.player.health == C.PLAYER_MAX_HEALTH
 
 
-def test_drone_chases_player():
-    rows = ["                    ", "            d       ", "                    ", "  P                 ", "####################"]
-    w = make_world(rows)
-    drone = w.enemies[0]
-    assert isinstance(drone, Drone)
-    d0 = abs(drone.body.cx - w.player.body.cx)
-    steps(w, 120)
-    assert drone.chasing
-    assert abs(drone.body.cx - w.player.body.cx) < d0
+def test_only_soldiers_remain():
+    assert "w" not in ENEMY_TYPES and "d" not in ENEMY_TYPES
+    assert all(cls.human for cls in ENEMY_TYPES.values())

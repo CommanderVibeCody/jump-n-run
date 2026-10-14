@@ -28,6 +28,12 @@ class InputState:
     aim: Optional[Tuple[float, float]] = None
     switch: int = 0                 # -1 previous weapon, +1 next weapon
     select_slot: Optional[int] = None  # 0-based slot in WEAPON_ORDER
+    up: bool = False                # climb ladders (W / Up)
+    interact: bool = False          # edge: open / close doors (E)
+
+
+CLIMB_SPEED = 150.0
+CLIMB_SIDE_SPEED = 90.0
 
 
 class Player:
@@ -45,6 +51,8 @@ class Player:
         self.jumping = False       # rising from a jump (jump cut still possible)
         self.drop_timer = 0.0
         self.invulnerable = 0.0
+        self.climbing = False
+        self.climb_phase = 0.0
         # animation state (no effect on gameplay)
         self.run_phase = 0.0
         self.squash = 0.0          # >0 squashed (landing), <0 stretched (jump)
@@ -108,6 +116,55 @@ class Player:
                 return True
         return False
 
+    # ----------------------------------------------------------- ladders
+    def touching_ladder(self, level) -> bool:
+        b = self.body
+        tx = math.floor(b.cx / C.TILE)
+        for ty in range(math.floor(b.top / C.TILE), math.floor((b.bottom - 1) / C.TILE) + 1):
+            if level.is_ladder(tx, ty):
+                return True
+        return False
+
+    def ladder_below(self, level) -> bool:
+        b = self.body
+        return level.is_ladder(math.floor(b.cx / C.TILE), math.floor((b.bottom + 2) / C.TILE))
+
+    def _update_ladder(self, inp: InputState, level, move: int, dt: float) -> bool:
+        """Ladder climbing. Returns True if the normal movement was skipped."""
+        body = self.body
+        if not self.climbing:
+            if inp.up and self.touching_ladder(level) and not (body.on_ground and not self._ladder_above(level)):
+                self.climbing = True
+            elif inp.down and body.on_ground and self.ladder_below(level):
+                self.climbing = True
+            if not self.climbing:
+                return False
+            body.vx *= 0.3
+            self.jump_buffer = 0.0
+        if inp.jump_pressed and not inp.up:   # jump off the ladder
+            self.climbing = False
+            body.vy = -C.JUMP_VELOCITY * 0.8
+            self.jumping = True
+            self.just_jumped = True
+            return False
+        vy = ((1 if inp.down else 0) - (1 if inp.up else 0)) * CLIMB_SPEED
+        vx = move * CLIMB_SIDE_SPEED
+        if move:
+            self.facing = move
+        body.vx, body.vy = vx, vy
+        integrate(body, level, 0.0, 0.0, dt, max_fall=C.MAX_FALL_SPEED, drop_through=vy > 0)
+        self.climb_phase += abs(vy) * dt * 0.06
+        if not self.touching_ladder(level) or (body.on_ground and vy > 0 and not self.ladder_below(level)):
+            self.climbing = False
+            if body.vy < 0:
+                body.vy = 0.0
+        self._update_aim(inp)
+        return True
+
+    def _ladder_above(self, level) -> bool:
+        b = self.body
+        return level.is_ladder(math.floor(b.cx / C.TILE), math.floor((b.top + 4) / C.TILE))
+
     # ---------------------------------------------------------- movement
     def update(self, inp: InputState, level, dt: float = C.FIXED_DT) -> None:
         body = self.body
@@ -127,6 +184,9 @@ class Player:
             self.coyote = max(0.0, self.coyote - dt)
 
         move = (1 if inp.right else 0) - (1 if inp.left else 0)
+
+        if self._update_ladder(inp, level, move, dt):
+            return
 
         if inp.jump_pressed:
             if inp.down and body.on_ground and is_standing_on_one_way(body, level):
@@ -175,7 +235,14 @@ class Player:
             self.landed_speed = fall_speed
             self.squash = min(0.45, fall_speed / 2000.0)
 
-        # aiming
+        self._update_aim(inp)
+
+        if body.on_ground and abs(body.vx) > 10:
+            self.run_phase += abs(body.vx) * dt * 0.045
+        elif body.on_ground:
+            self.run_phase = 0.0
+
+    def _update_aim(self, inp: InputState) -> None:
         sx, sy = self.shoulder()
         if inp.aim is not None:
             self.aim_angle = math.atan2(inp.aim[1] - sy, inp.aim[0] - sx)
@@ -183,8 +250,3 @@ class Player:
                 self.facing = 1 if inp.aim[0] > sx else -1
         else:
             self.aim_angle = 0.0 if self.facing > 0 else math.pi
-
-        if body.on_ground and abs(body.vx) > 10:
-            self.run_phase += abs(body.vx) * dt * 0.045
-        elif body.on_ground:
-            self.run_phase = 0.0

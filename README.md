@@ -18,6 +18,8 @@ primitives, so there are no image assets.
 
 ![Night level](docs/night.png)
 
+![Inside a two storey house with the minimap](docs/house.png)
+
 ## Features
 
 * **Tight platformer movement**: acceleration and friction, gravity with a
@@ -30,10 +32,19 @@ primitives, so there are no image assets.
   *Green Hills* (day), *Night Factory* (night) and *Sunset Warzone* (dense
   fights, bunkers and barrel fields). Solid blocks, one-way platforms you can
   jump through (and drop through), spikes, pits, checkpoints and a goal flag.
+* **Enterable houses and bunkers** (Terraria style) in every level: back
+  walls, windows, doors that open when you walk into them or press `E`,
+  several floors connected by climbable ladders, furniture (tables, crates,
+  lamps), soldiers and loot inside. The facade fades out while you are inside.
+  Closed doors block bullets and line of sight; explosions blow them open;
+  enemies never open doors.
+* **Minimap**: a semi-transparent map in the bottom-right corner with tiles,
+  houses, you, enemies (red), pickups (yellow), checkpoints (green) and the
+  goal (gold). Toggle with `Tab` / `N` or in the settings.
 * **Ten weapons** with ammo, switching and a HUD (see the table below).
-* **Human soldiers** drawn as animated figures (head, helmet, torso, arms,
-  legs) with a walk cycle and an arm that aims the gun at you, plus blob
-  walkers and flying drones.
+* **Nine soldier types** drawn as animated figures (head, helmet, torso,
+  arms, legs) with a walk cycle, an arm that aims the gun at you, a uniform
+  colour per type and a health bar once they are hurt.
 * **Explosive barrels** that chain-react, big explosions with a shockwave
   ring, fire, smoke and bouncing debris, strong screen shake, hit-stop on
   kills, and bullet casings ejecting from every gun.
@@ -69,18 +80,24 @@ explosives push you around but never hurt you; enemy grenades and barrels do.
 
 ## Enemies
 
-| Map char | Enemy | Behaviour |
-|----------|-------|-----------|
-| `r` | Rifleman | patrols, stops when he sees you, fires 3-round bursts |
-| `k` | Shotgunner | short range, 5-pellet blasts |
-| `g` | Grenadier | lobs bouncing grenades in a ballistic arc |
-| `h` | Heavy | slow, 240 HP, spins up a minigun and sprays bullets |
-| `s` | Guard | stationary, single aimed shots |
-| `w` | Walker | blob that patrols and hurts on contact |
-| `d` | Drone | flies after you when it has line of sight |
-| `b` | Explosive barrel | explodes when shot, chains into nearby barrels |
+Every enemy is a soldier. Speed is the patrol speed in pixels per second
+(the player runs at 260), fire rate is the pause between two attacks, range
+is how far away they spot and shoot you (in pixels; one tile is 32).
 
-Jump on an enemy's head to stomp it.
+| Map char | Soldier | Uniform | HP | Speed | Weapon | Damage | Fire rate | Range | Notes |
+|---|---|---|---|---|---|---|---|---|---|
+| `e` | Recruit | olive | 40 | 50 | pistol | 8 | 1 shot / 1.8 s | 380 | weak, slow reactions |
+| `r` | Rifleman | green | 60 | 60 | rifle | 9 × 3 | 3-round burst / 1.6 s | 460 | |
+| `k` | Shotgunner | brown | 80 | 60 | shotgun | 8 × 5 pellets | 1 blast / 1.7 s | 300 | close range |
+| `g` | Grenadier | slate blue | 70 | 60 | grenade launcher | 40 splash (r 80) | 1 grenade / 2.2 s | 520 | lobs bouncing grenades in an arc |
+| `n` | Sniper | khaki | 50 | 25 | sniper rifle | 35 | 1 shot / 2.6 s | 800 | aims for 1 s with a red laser sight, 1400 px/s bullets |
+| `h` | Heavy | grey | 240 | 30 | minigun | 6 × 18 | 18-round spray / 2.0 s | 480 | spins up first, hard to knock back |
+| `o` | Officer (elite) | black / red beret | 100 | 110 | SMG | 10 × 5 | 5-round burst / 1.1 s | 440 | fast, keeps his distance, jumps over your bullets |
+| `q` | Rocketeer | red | 90 | 40 | rocket launcher | 45, splash (r 80) | 1 rocket / 3.0 s | 600 | slow accelerating rockets |
+| `s` | Guard | purple | 70 | 0 | pistol | 12 | 1 shot / 1.5 s | 460 | stationary |
+| `b` | Explosive barrel | | | | | 110 splash (r 120) | | | explodes when shot, chains into nearby barrels |
+
+Jump on any soldier's head to stomp it.
 
 ## Controls
 
@@ -89,9 +106,12 @@ Jump on an enemy's head to stomp it.
 | Move | `A` / `D` or `←` / `→` |
 | Jump (hold for a higher jump) | `Space`, `W` or `↑` |
 | Drop through a one-way platform | `S` / `↓` + Jump |
+| Climb ladders | `W` / `S` or `↑` / `↓` (Jump lets go) |
+| Open / close a door | `E` (or just walk into it) |
+| Toggle the minimap | `Tab` or `N` |
 | Shoot | Left mouse button, `J` or `F` |
 | Aim | Mouse (without mouse movement you shoot in the facing direction) |
-| Switch weapon | `Q` / `E` or mouse wheel |
+| Next weapon | `Q` or mouse wheel |
 | Select weapon | `1` – `9`, `0` |
 | Mute / unmute | `M` (works everywhere) |
 | Pause menu | `Esc` |
@@ -107,6 +127,7 @@ Open **Settings** from the main menu:
 | Sound effects | On | `Enter` toggles |
 | Music | On | `Enter` toggles |
 | Blood | On | `Enter` toggles; off replaces blood, gibs and splatter with sparks |
+| Minimap | On | `Enter` toggles (also `Tab` / `N` in game) |
 
 Settings apply immediately and last until you quit the game.
 
@@ -236,9 +257,21 @@ Levels are ASCII maps in [`game/levels.py`](game/levels.py):
 | `^` | spikes | `P` | player start |
 | `G` | goal flag | `C` | checkpoint |
 | `+` | health pack | `a` | ammo crate |
-| `b` | explosive barrel | | |
+| `b` | explosive barrel | `:` | back wall (house interior) |
+| `O` | window (back wall with glass) | `\|` | door (a vertical run is one door) |
+| `H` | ladder (the top rung can be stood on) | `t` `x` `l` | table, crate, lamp (decoration) |
 
-Enemy and weapon characters are listed in the tables above.
+Enemy and weapon characters are listed in the tables above. Entities and
+decorations placed next to back-wall tiles automatically get a back wall
+behind them, and every connected back-wall area becomes one house whose
+facade fades when you walk in. `add_house()` in `game/levels.py` stamps a
+complete house (walls, roof, doors, floors, ladder, windows, contents) into
+a map:
+
+```python
+add_house(rows, x0=101, width=14, ground=15, floors=2,
+          contents={(4, 0): "r", (11, 0): "+", (5, 1): "n"}, ladder=7, windows=(3, 10))
+```
 
 Add a new `LevelDef` to `LEVELS` and it is played after the existing ones.
 
@@ -258,16 +291,16 @@ jump-n-run/
 │   ├── player.py        # player movement (coyote time, jump buffer, variable jump) and inventory
 │   ├── physics.py       # hand-written integration and tile collision
 │   ├── weapons.py       # weapon specs, projectiles, pickups
-│   ├── enemies.py       # soldiers (rifleman, shotgunner, grenadier, heavy, guard), walker, drone, barrels, corpses
-│   ├── level.py         # ASCII level parser and tile queries
+│   ├── enemies.py       # nine soldier types, barrels, corpses
+│   ├── level.py         # ASCII level parser, tile queries, houses, doors, ladders
 │   ├── levels.py        # the level maps and colour themes
 │   ├── camera.py        # smooth follow camera
 │   ├── effects.py       # particles, blood and decals, shockwaves, beams, screen shake
-│   ├── render.py        # all drawing: parallax, tiles, characters, HUD
+│   ├── render.py        # all drawing: parallax, tiles, houses, characters, HUD, minimap
 │   ├── ui.py            # fonts, panels, animated menu list
 │   └── constants.py     # tuning values
-├── tests/               # pytest suite: physics, weapons, arsenal, enemies, action (barrels, blood),
-│                        # world, audio and settings, menus, headless smoke test
+├── tests/               # pytest suite: physics, weapons, arsenal, enemies, soldiers, houses (doors,
+│                        # ladders, back walls), minimap, action, world, audio, menus, smoke test
 ├── tools/
 │   └── make_screenshots.py  # renders the screenshots in docs/ headless
 └── docs/                # screenshots

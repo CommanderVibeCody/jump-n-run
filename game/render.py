@@ -234,9 +234,16 @@ def render_level_surface(level: Level) -> pygame.Surface:
     rng = random.Random(level.name)
     for ty in range(level.height):
         for tx in range(level.width):
+            if level.is_back(tx, ty):
+                draw_backwall_tile(surf, level, tx, ty, th)
+    shells = house_shell_cells(level)
+    for ty in range(level.height):
+        for tx in range(level.width):
             ch = level.tiles[ty][tx]
             x, y = tx * T, ty * T
-            if ch == "#":
+            if ch == "#" and (tx, ty) in shells:
+                draw_shell_tile(surf, level, tx, ty, shells[(tx, ty)], th)
+            elif ch == "#":
                 pygame.draw.rect(surf, th.ground, (x, y, T, T))
                 # texture: a few darker stones
                 for _ in range(3):
@@ -267,7 +274,178 @@ def render_level_surface(level: Level) -> pygame.Surface:
                     sx = x + i * 8
                     pygame.draw.polygon(surf, (190, 195, 205), [(sx, y + T), (sx + 4, y + T - 18), (sx + 8, y + T)])
                     pygame.draw.line(surf, (250, 250, 255), (sx + 4, y + T - 18), (sx + 4, y + T - 12))
+            elif ch == "H":
+                draw_ladder_tile(surf, x, y)
+    for d in level.decor:
+        draw_decor(surf, d.kind, d.tx * T, d.ty * T)
     return surf
+
+
+# ----------------------------------------------------------- buildings
+WALL_COLOR = (92, 70, 58)
+WALL_DARK = (70, 52, 44)
+BRICK = (150, 82, 62)
+BRICK_DARK = (112, 58, 44)
+ROOF = (110, 48, 42)
+CONCRETE = (120, 124, 130)
+
+
+def house_shell_cells(level: Level):
+    """Solid tiles that belong to a house shell -> "roof" / "wall" / "floor"."""
+    out = {}
+    for h in level.houses:
+        for ty in range(h.y0, h.y1 + 1):
+            for tx in range(h.x0, h.x1 + 1):
+                if level.tile(tx, ty) != "#":
+                    continue
+                if ty == h.y0:
+                    out[(tx, ty)] = "roof"
+                elif ty == h.y1:
+                    continue  # the ground below the house keeps its look
+                else:
+                    out[(tx, ty)] = "wall"
+    return out
+
+
+def draw_shell_tile(surf, level, tx, ty, part, th) -> None:
+    T = C.TILE
+    x, y = tx * T, ty * T
+    bunker = th.night
+    if part == "roof":
+        col = shade(CONCRETE, 0.8) if bunker else ROOF
+        pygame.draw.rect(surf, col, (x, y, T, T))
+        for i in range(0, T, 8):
+            pygame.draw.line(surf, shade(col, 0.75), (x, y + i + 6), (x + T, y + i + 2), 2)
+        if not level.is_solid(tx, ty - 1):
+            pygame.draw.rect(surf, shade(col, 1.3), (x, y, T, 4))
+        return
+    col = CONCRETE if bunker else BRICK
+    dark = shade(CONCRETE, 0.7) if bunker else BRICK_DARK
+    pygame.draw.rect(surf, col, (x, y, T, T))
+    for row in range(4):
+        by = y + row * 8
+        pygame.draw.line(surf, dark, (x, by), (x + T, by), 1)
+        off = 0 if row % 2 == 0 else 8
+        for bx in range(x + off, x + T, 16):
+            pygame.draw.line(surf, dark, (bx, by), (bx, by + 8), 1)
+    if level.is_back(tx, ty + 1) or level.is_back(tx, ty - 1):  # floor slab
+        pygame.draw.rect(surf, (120, 86, 58), (x, y, T, 6))
+        pygame.draw.line(surf, (160, 120, 80), (x, y), (x + T, y), 2)
+
+
+def draw_backwall_tile(surf, level, tx, ty, th) -> None:
+    T = C.TILE
+    x, y = tx * T, ty * T
+    col = (66, 70, 78) if th.night else WALL_COLOR
+    dark = shade(col, 0.78)
+    pygame.draw.rect(surf, col, (x, y, T, T))
+    pygame.draw.line(surf, dark, (x, y), (x, y + T), 2)
+    pygame.draw.line(surf, dark, (x + 16, y), (x + 16, y + T), 1)
+    if level.tile(tx, ty) == "O":
+        r = pygame.Rect(x + 4, y + 4, T - 8, T - 8)
+        sky = (40, 60, 110) if th.night else (150, 200, 235)
+        pygame.draw.rect(surf, sky, r)
+        pygame.draw.line(surf, (255, 255, 255), (r.x + 4, r.bottom - 6), (r.right - 6, r.y + 4), 2)
+        pygame.draw.rect(surf, (60, 40, 30), r, 3)
+        pygame.draw.line(surf, (60, 40, 30), (r.centerx, r.y), (r.centerx, r.bottom), 2)
+        pygame.draw.line(surf, (60, 40, 30), (r.x, r.centery), (r.right, r.centery), 2)
+    # soft shadow under ceilings
+    if level.is_solid(tx, ty - 1):
+        sh = pygame.Surface((T, 8), pygame.SRCALPHA)
+        sh.fill((0, 0, 0, 60))
+        surf.blit(sh, (x, y))
+
+
+def draw_ladder_tile(surf, x, y) -> None:
+    T = C.TILE
+    wood, dark = (170, 120, 70), (110, 75, 40)
+    pygame.draw.rect(surf, wood, (x + 6, y, 4, T))
+    pygame.draw.rect(surf, wood, (x + T - 10, y, 4, T))
+    for ry in (y + 6, y + 16, y + 26):
+        pygame.draw.rect(surf, dark, (x + 6, ry, T - 12, 3))
+
+
+def draw_decor(surf, kind, x, y) -> None:
+    T = C.TILE
+    if kind == "t":   # table
+        pygame.draw.rect(surf, (140, 95, 55), (x - 6, y + 14, T + 12, 5))
+        pygame.draw.rect(surf, (100, 68, 40), (x - 3, y + 19, 4, 13))
+        pygame.draw.rect(surf, (100, 68, 40), (x + T - 1, y + 19, 4, 13))
+        pygame.draw.rect(surf, (200, 200, 210), (x + 6, y + 9, 7, 5))
+    elif kind == "x":  # crate
+        r = pygame.Rect(x + 2, y + 6, T - 4, T - 6)
+        pygame.draw.rect(surf, (150, 110, 60), r)
+        pygame.draw.rect(surf, (100, 70, 38), r, 3)
+        pygame.draw.line(surf, (100, 70, 38), r.topleft, r.bottomright, 3)
+        pygame.draw.line(surf, (100, 70, 38), r.topright, r.bottomleft, 3)
+    elif kind == "l":  # hanging lamp
+        pygame.draw.line(surf, (40, 40, 40), (x + T // 2, y), (x + T // 2, y + 10), 2)
+        pygame.draw.polygon(surf, (60, 60, 60), [(x + 8, y + 18), (x + T - 8, y + 18), (x + T // 2 + 4, y + 10),
+                                                  (x + T // 2 - 4, y + 10)])
+        pygame.draw.circle(surf, (255, 230, 150), (x + T // 2, y + 19), 4)
+        glow = glow_sprite((255, 220, 140), 30)
+        surf.blit(glow, (x + T // 2 - glow.get_width() // 2, y + 20 - glow.get_height() // 2),
+                  special_flags=pygame.BLEND_RGBA_ADD)
+
+
+def render_facade(level: Level, house) -> pygame.Surface:
+    """Exterior look of a house that hides its interior while you are outside."""
+    T = C.TILE
+    th = level.theme
+    w, h = (house.x1 - house.x0 + 1) * T, (house.y1 - house.y0 + 1) * T
+    surf = pygame.Surface((w, h), pygame.SRCALPHA)
+    col = CONCRETE if th.night else BRICK
+    dark = shade(col, 0.7)
+    for (tx, ty) in house.cells:
+        x, y = (tx - house.x0) * T, (ty - house.y0) * T
+        pygame.draw.rect(surf, shade(col, 0.92), (x, y, T, T))
+        for row in range(4):
+            by = y + row * 8
+            pygame.draw.line(surf, dark, (x, by), (x + T, by), 1)
+            off = 0 if (row + ty) % 2 == 0 else 8
+            for bx in range(x + off, x + T, 16):
+                pygame.draw.line(surf, dark, (bx, by), (bx, by + 8), 1)
+        if level.tile(tx, ty) == "O":
+            r = pygame.Rect(x + 4, y + 4, T - 8, T - 8)
+            pygame.draw.rect(surf, (255, 210, 120) if th.night else (40, 50, 70), r)
+            pygame.draw.rect(surf, (70, 50, 35), r, 3)
+            pygame.draw.line(surf, (70, 50, 35), (r.centerx, r.y), (r.centerx, r.bottom), 2)
+    return surf
+
+
+def draw_door(surface, door, ox, oy) -> None:
+    x, y, w, h = door.rect
+    x, y = x - ox, y - oy
+    wood, dark = (150, 96, 52), (96, 60, 32)
+    if door.broken:
+        pygame.draw.rect(surface, dark, (x - 2, y + h - 6, w + 4, 6))
+        return
+    k = door.anim
+    width = max(5, int(w * (1 - k)))
+    dx = x if door.side > 0 else x + w - width
+    if k > 0.5:  # swung open: thin board at the hinge side
+        dx = x + w - 6 if door.side > 0 else x
+        width = 6
+    r = pygame.Rect(int(dx), int(y), width, int(h))
+    pygame.draw.rect(surface, wood, r)
+    pygame.draw.rect(surface, dark, r, 2)
+    if width > 14:
+        for py in (y + 8, y + h / 2 + 4):
+            pygame.draw.rect(surface, dark, (r.x + 5, int(py), r.w - 10, h / 2 - 16), 2)
+        pygame.draw.circle(surface, (230, 200, 90), (r.x + (r.w - 6 if door.side < 0 else 6), int(y + h / 2)), 3)
+
+
+def draw_laser(surface, level, e, ox, oy) -> None:
+    """Red laser sight of an aiming sniper (stops at walls)."""
+    gx, gy = e.gun_pos()
+    ca, sa = math.cos(e.aim_angle), math.sin(e.aim_angle)
+    length = 0.0
+    while length < e.RANGE + 100 and not level.solid_at(gx + ca * length, gy + sa * length):
+        length += 6
+    ex, ey = gx + ca * length, gy + sa * length
+    k = 1 - e.windup / e.WINDUP
+    pygame.draw.line(surface, (255, 40, 40), (gx - ox, gy - oy), (ex - ox, ey - oy), 1 + int(k * 2))
+    blit_glow(surface, (255, 60, 60), (ex - ox, ey - oy), 6 + 6 * k)
 
 
 # ------------------------------------------------------------- characters
@@ -362,40 +540,12 @@ def draw_enemy(surface: pygame.Surface, e, ox: float, oy: float, t: float) -> No
     b = e.body
     x, y = b.x - ox, b.y - oy
     flash = e.hurt_flash > 0
-    if getattr(e, "human", False):
-        windup = (1 - e.windup / e.WINDUP) if e.windup > 0 else 0.0
-        draw_soldier(surface, b.cx - ox, b.bottom - oy, e.facing, e.walk_phase, e.aim_angle, e.PALETTE, e.GUN,
-                     e.SCALE, flash, abs(b.vx) > 5, windup)
-        if e.muzzle_flash > 0:
-            gx, gy = e.gun_pos()
-            blit_glow(surface, (255, 220, 150), (gx - ox, gy - oy), 14)
-    elif e.kind == "walker":
-        col = (255, 255, 255) if flash else (220, 90, 60)
-        bob = abs(math.sin(e.anim * 9)) * 2
-        r = pygame.Rect(int(x), int(y + bob), int(b.w), int(b.h - 4))
-        pygame.draw.rect(surface, col, r, border_radius=9)
-        pygame.draw.rect(surface, shade(col, 0.75), r.inflate(-6, -14).move(0, 5), border_radius=6)
-        for i in (0, 1):
-            fx = x + 6 + i * (b.w - 12) + math.sin(e.anim * 9 + i * math.pi) * 3
-            pygame.draw.ellipse(surface, (60, 30, 30), (fx - 5, y + b.h - 6, 10, 6))
-        ex = x + b.w / 2 + e.facing * 6
-        for d in (-4, 4):
-            pygame.draw.circle(surface, (255, 255, 255), (int(ex + d), int(y + 10 + bob)), 4)
-            pygame.draw.circle(surface, (20, 20, 20), (int(ex + d + e.facing * 1.5), int(y + 10 + bob)), 2)
-        pygame.draw.line(surface, (40, 20, 20), (ex - 8, y + 4 + bob), (ex - 1, y + 7 + bob), 2)
-        pygame.draw.line(surface, (40, 20, 20), (ex + 8, y + 4 + bob), (ex + 1, y + 7 + bob), 2)
-    else:  # drone
-        col = (255, 255, 255) if flash else (90, 200, 170)
-        cy = y + b.h / 2 + math.sin(t * 6 + e.anim) * 2
-        pygame.draw.ellipse(surface, col, (x, cy - 9, b.w, 18))
-        pygame.draw.ellipse(surface, shade(col, 0.6), (x + 4, cy, b.w - 8, 8))
-        spin = abs(math.sin(t * 40 + e.anim)) * 12 + 2
-        for px in (x + 4, x + b.w - 4):
-            pygame.draw.line(surface, (200, 200, 210), (px, cy - 11), (px, cy - 9), 2)
-            pygame.draw.line(surface, (220, 220, 230), (px - spin / 2, cy - 12), (px + spin / 2, cy - 12), 2)
-        eye_col = (255, 60, 60) if e.chasing else (255, 210, 80)
-        pygame.draw.circle(surface, eye_col, (int(x + b.w / 2 + e.facing * 6), int(cy - 1)), 4)
-        blit_glow(surface, eye_col, (x + b.w / 2 + e.facing * 6, cy - 1), 10, 0.6)
+    windup = (1 - e.windup / e.WINDUP) if e.windup > 0 else 0.0
+    draw_soldier(surface, b.cx - ox, b.bottom - oy, e.facing, e.walk_phase, e.aim_angle, e.PALETTE, e.GUN,
+                 e.SCALE, flash, abs(b.vx) > 5, windup)
+    if e.muzzle_flash > 0:
+        gx, gy = e.gun_pos()
+        blit_glow(surface, (255, 220, 150), (gx - ox, gy - oy), 14)
     if e.health < e.MAX_HEALTH:
         frac = e.health / e.MAX_HEALTH
         pygame.draw.rect(surface, (30, 30, 30), (x - 2, y - 10, b.w + 4, 5))
@@ -424,14 +574,8 @@ def draw_corpse(surface: pygame.Surface, c, ox: float, oy: float, t: float) -> N
     size = int(90 * c.scale)
     surf = pygame.Surface((size, size), pygame.SRCALPHA)
     cx = size / 2
-    if c.palette:
-        draw_soldier(surf, cx, cx + 21 * c.scale, c.facing, 0.0, 0.3 if c.facing > 0 else math.pi - 0.3,
-                     c.palette, c.gun, c.scale, moving=False)
-    else:  # walker blob
-        pygame.draw.rect(surf, (150, 60, 40), (cx - 14, cx - 14, 28, 26), border_radius=9)
-        for d in (-4, 4):
-            pygame.draw.line(surf, (30, 20, 20), (cx + d - 2, cx - 6), (cx + d + 2, cx - 2), 2)
-            pygame.draw.line(surf, (30, 20, 20), (cx + d + 2, cx - 6), (cx + d - 2, cx - 2), 2)
+    draw_soldier(surf, cx, cx + 21 * c.scale, c.facing, 0.0, 0.3 if c.facing > 0 else math.pi - 0.3,
+                 c.palette, c.gun, c.scale, moving=False)
     if c.burning:
         surf.fill((90, 60, 50, 255), special_flags=pygame.BLEND_RGBA_MULT)
     rot = pygame.transform.rotate(surf, -math.degrees(c.angle) * c.facing)
@@ -510,6 +654,8 @@ class WorldRenderer:
         self._level_key = None
         self.level_surface: Optional[pygame.Surface] = None
         self.background: Optional[ParallaxBackground] = None
+        self.facades = []
+        self.minimap_surface: Optional[pygame.Surface] = None
 
     def _prepare(self, world) -> None:
         key = (world.level_index, id(world.level))
@@ -519,6 +665,8 @@ class WorldRenderer:
             if pygame.display.get_surface() is not None:
                 self.level_surface = self.level_surface.convert_alpha()
             self.background = ParallaxBackground(world.level.theme, self.size, seed=world.level_index + 3)
+            self.facades = [render_facade(world.level, h) for h in world.level.houses]
+            self.minimap_surface = render_minimap_surface(world.level)
 
     def draw(self, surface: pygame.Surface, world) -> None:
         self._prepare(world)
@@ -545,12 +693,26 @@ class WorldRenderer:
             draw_pickup(surface, item, ox, oy, t)
         for e in world.enemies:
             draw_enemy(surface, e, ox, oy, t)
+            if e.kind == "sniper" and e.windup > 0:
+                draw_laser(surface, world.level, e, ox, oy)
+        T = C.TILE
+        for h, facade in zip(world.level.houses, self.facades):
+            alpha = int(255 * (1 - h.reveal))
+            if alpha > 0:
+                x, y = h.x0 * T - ox, h.y0 * T - oy
+                if x < self.size[0] and y < self.size[1] and x + facade.get_width() > 0 and y + facade.get_height() > 0:
+                    facade.set_alpha(alpha)
+                    surface.blit(facade, (x, y))
+        for door in world.level.doors:
+            draw_door(surface, door, ox, oy)
 
         p = world.player
         if p.alive and not (p.invulnerable > 0 and int(p.invulnerable * 14) % 2 == 0):
             b = p.body
-            draw_player(surface, b.cx - ox, b.bottom - oy, p.facing, p.run_phase, p.squash, p.aim_angle,
-                        p.current, b.on_ground, p.recoil_anim, b.vy)
+            climbing = getattr(p, "climbing", False)
+            draw_player(surface, b.cx - ox, b.bottom - oy, p.facing, p.climb_phase if climbing else p.run_phase,
+                        p.squash, p.aim_angle, p.current, b.on_ground or climbing, p.recoil_anim,
+                        0.0 if climbing else b.vy)
 
         for pr in world.projectiles:
             x, y = pr.x - ox, pr.y - oy
@@ -611,6 +773,82 @@ class WorldRenderer:
         for txt in fx.texts:
             a = int(255 * min(1.0, txt.life / txt.max_life * 2))
             draw_text(surface, txt.text, (txt.x - ox, txt.y - oy), 26, txt.color, anchor="center", bold=True, alpha=a)
+
+
+    def draw_minimap(self, surface: pygame.Surface, world) -> pygame.Rect:
+        self._prepare(world)
+        return draw_minimap(surface, world, self.minimap_surface)
+
+
+# ---------------------------------------------------------------- minimap
+MINIMAP_SCALE = 3                 # pixels per tile
+MINIMAP_SIZE = (228, 96)          # visible window in pixels
+MINIMAP_ALPHA = 190
+
+
+def render_minimap_surface(level: Level) -> pygame.Surface:
+    """Static minimap: one small coloured square per tile."""
+    s = MINIMAP_SCALE
+    surf = pygame.Surface((level.width * s, level.height * s), pygame.SRCALPHA)
+    surf.fill((10, 14, 24, 150))
+    shells = house_shell_cells(level)
+    for ty in range(level.height):
+        for tx in range(level.width):
+            ch = level.tiles[ty][tx]
+            col = None
+            if level.is_back(tx, ty):
+                col = (110, 90, 75, 230)
+            if ch == "#":
+                col = (200, 120, 90, 255) if (tx, ty) in shells else (150, 160, 175, 255)
+            elif ch == "=":
+                col = (120, 170, 220, 255)
+            elif ch == "^":
+                col = (230, 80, 80, 255)
+            elif ch == "H":
+                col = (220, 180, 110, 255)
+            if col:
+                surf.fill(col, (tx * s, ty * s, s, s))
+    for d in level.doors:
+        surf.fill((240, 170, 70, 255), (d.tx * s, d.ty * s, s, d.height * s))
+    return surf
+
+
+def draw_minimap(surface: pygame.Surface, world, static: pygame.Surface) -> pygame.Rect:
+    """Semi-transparent minimap in the bottom-right corner, centred on the player."""
+    s = MINIMAP_SCALE
+    mw, mh = MINIMAP_SIZE
+    sw, sh = surface.get_size()
+    rect = pygame.Rect(sw - mw - 12, sh - mh - 12, mw, mh)
+    p = world.player.body
+    lw, lh = static.get_size()
+    vx = int(min(max(0, p.cx / C.TILE * s - mw / 2), max(0, lw - mw)))
+    vy = int(min(max(0, p.cy / C.TILE * s - mh / 2), max(0, lh - mh)))
+    panel = pygame.Surface((mw, mh), pygame.SRCALPHA)
+    panel.blit(static, (-vx, -vy))
+
+    def dot(x, y, col, r=2):
+        px, py = int(x / C.TILE * s - vx), int(y / C.TILE * s - vy)
+        if -4 <= px <= mw + 4 and -4 <= py <= mh + 4:
+            pygame.draw.circle(panel, col, (px, py), r)
+
+    for cp in world.checkpoints:
+        dot(cp.x + cp.w / 2, cp.y + cp.h / 2, (90, 230, 120) if not cp.active else (160, 255, 180), 2)
+    if world.goal:
+        g = world.goal
+        dot(g.x + g.w / 2, g.y + g.h / 2, (255, 210, 60), 3)
+    for item in world.pickups:
+        if item.alive:
+            dot(item.x + item.W / 2, item.y + item.H / 2, (255, 235, 90), 1)
+    for e in world.enemies:
+        if e.alive:
+            dot(e.body.cx, e.body.cy, (255, 60, 60), 2)
+    blink = int(world.time * 4) % 2 == 0
+    dot(p.cx, p.cy, (255, 255, 255) if blink else (120, 220, 255), 3)
+    panel.set_alpha(MINIMAP_ALPHA)
+    surface.blit(panel, rect.topleft)
+    pygame.draw.rect(surface, (230, 235, 245), rect, 1, border_radius=3)
+    draw_text(surface, "MAP (Tab)", (rect.x + 4, rect.y - 18), 18, C.DIM)
+    return rect
 
 
 # -------------------------------------------------------------------- HUD

@@ -183,12 +183,15 @@ class MainMenu:
 CONTROLS = [
     ("Move", "A / D  or  Left / Right"),
     ("Jump (hold = higher)", "Space / W / Up"),
+    ("Climb ladder", "W / S  or  Up / Down"),
     ("Drop through platform", "S / Down + Jump"),
+    ("Open / close door", "E  (or walk into it)"),
     ("Shoot", "Left mouse  or  J / F"),
     ("Aim", "Mouse (or facing direction)"),
-    ("Switch weapon", "Q / E  or  mouse wheel"),
+    ("Next weapon", "Q  or  mouse wheel"),
     ("Select weapon", "1 - 9, 0"),
     ("Pause", "Esc"),
+    ("Toggle minimap", "Tab / N"),
     ("Mute sound", "M"),
 ]
 
@@ -213,21 +216,21 @@ class ControlsScreen:
     def draw(self, surface: pygame.Surface) -> None:
         w, h = self.size
         self.background.draw(surface)
-        panel = pygame.Rect(0, 0, 720, 430)
-        panel.midtop = (w // 2, 20)
+        panel = pygame.Rect(0, 0, 720, 450)
+        panel.midtop = (w // 2, 12)
         draw_panel(surface, panel)
-        draw_text(surface, "CONTROLS", (w // 2, 56), 60, C.ACCENT, anchor="center", bold=True)
-        y = 98
+        draw_text(surface, "CONTROLS", (w // 2, 46), 56, C.ACCENT, anchor="center", bold=True)
+        y = 82
         for i, (action, keys) in enumerate(CONTROLS):
             if i % 2 == 0:
-                row = pygame.Surface((660, 30), pygame.SRCALPHA)
+                row = pygame.Surface((660, 27), pygame.SRCALPHA)
                 row.fill((255, 255, 255, 14))
-                surface.blit(row, (w // 2 - 330, y - 4))
-            draw_text(surface, action, (w // 2 - 310, y), 28, C.TEXT)
-            draw_text(surface, keys, (w // 2 + 20, y), 28, C.ACCENT)
-            y += 34
-        draw_text(surface, "Collect weapons, stomp or shoot enemies and reach the flag!",
-                  (w // 2, y + 10), 24, C.DIM, anchor="center")
+                surface.blit(row, (w // 2 - 330, y - 3))
+            draw_text(surface, action, (w // 2 - 310, y), 25, C.TEXT)
+            draw_text(surface, keys, (w // 2 + 20, y), 25, C.ACCENT)
+            y += 28
+        draw_text(surface, "Collect weapons, stomp or shoot soldiers and reach the flag!",
+                  (w // 2, y + 6), 22, C.DIM, anchor="center")
         self.menu.draw(surface)
 
 
@@ -239,14 +242,15 @@ class SettingsScreen:
         self.background = background
         self.settings = settings
         self.size = size
-        self.menu = MenuList(self.labels(), (size[0] // 2, size[1] // 2 + 30), spacing=56, size=40)
+        self.menu = MenuList(self.labels(), (size[0] // 2, size[1] // 2 + 30), spacing=50, size=38)
         self.time = 0.0
 
     def labels(self):
         s = self.settings
         on = lambda v: "On" if v else "Off"  # noqa: E731
         return [f"Master Volume: < {int(round(s.master_volume * 100))}% >", f"Sound Effects: {on(s.sfx)}",
-                f"Music: {on(s.music)}", f"Blood: {on(s.blood)}", "Back"]
+                f"Music: {on(s.music)}", f"Blood: {on(s.blood)}",
+                f"Minimap: {on(s.minimap)}", "Back"]
 
     def refresh(self) -> None:
         self.menu.items = self.labels()
@@ -272,6 +276,8 @@ class SettingsScreen:
             s.music = not s.music
         elif chosen == 3:
             s.blood = not s.blood
+        elif chosen == 4:
+            s.minimap = not s.minimap
         else:
             return "menu"
         self.refresh()
@@ -285,8 +291,8 @@ class SettingsScreen:
     def draw(self, surface: pygame.Surface) -> None:
         w, h = self.size
         self.background.draw(surface)
-        panel = pygame.Rect(0, 0, 560, 420)
-        panel.center = (w // 2, h // 2)
+        panel = pygame.Rect(0, 0, 560, 470)
+        panel.center = (w // 2, h // 2 + 10)
         draw_panel(surface, panel)
         draw_text(surface, "SETTINGS", (w // 2, panel.top + 46), 60, C.ACCENT, anchor="center", bold=True)
         self.menu.draw(surface)

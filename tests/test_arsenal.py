@@ -12,7 +12,7 @@ from game.weapons import (DUAL_PISTOLS, FLAMETHROWER, GRENADE_LAUNCHER, PICKUP_W
                           WEAPONS, Projectile, Weapon, make_projectile)
 from helpers import make_world, settle, steps
 
-LINE = ["                              ", "  P     w  w  w     #         ", "##############################"]
+LINE = ["                              ", "  P     e  e  e     #         ", "##############################"]
 
 
 def fire_once(w, key):
@@ -35,7 +35,7 @@ def test_sniper_pierces_several_enemies():
     settle(w)
     fire_once(w, "sniper")
     steps(w, 60)
-    assert w.kills == 3  # 120 damage kills each 50 HP walker in one line
+    assert w.kills == 3  # 120 damage kills each 40 HP recruit in one line
 
 
 def test_railgun_is_instant_and_pierces_until_wall():
@@ -63,7 +63,7 @@ def test_grenade_bounces_then_explodes_after_fuse():
 
 
 def test_grenade_explodes_in_world():
-    w = make_world(["                    ", "  P     w           ", "####################"])
+    w = make_world(["                    ", "  P     e           ", "####################"])
     settle(w)
     fire_once(w, "grenade_launcher")
     exploded = False

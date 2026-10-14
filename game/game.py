@@ -19,6 +19,8 @@ from .world import World
 LEFT_KEYS = (pygame.K_a, pygame.K_LEFT)
 RIGHT_KEYS = (pygame.K_d, pygame.K_RIGHT)
 DOWN_KEYS = (pygame.K_s, pygame.K_DOWN)
+UP_KEYS = (pygame.K_w, pygame.K_UP)
+MINIMAP_KEYS = (pygame.K_TAB, pygame.K_n)
 JUMP_KEYS = (pygame.K_SPACE, pygame.K_w, pygame.K_UP)
 SHOOT_KEYS = (pygame.K_j, pygame.K_f)
 SLOT_KEYS = (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5, pygame.K_6, pygame.K_7, pygame.K_8,
@@ -46,6 +48,7 @@ class GameScene:
         self.mouse_idle = MOUSE_AIM_TIMEOUT  # seconds since the mouse last moved
         self.jump_latch = False
         self.switch_latch = 0
+        self.interact_latch = False
         self.slot_latch: Optional[int] = None
         # overlays
         self.paused = False
@@ -88,6 +91,8 @@ class GameScene:
             left=any(k in held for k in LEFT_KEYS),
             right=any(k in held for k in RIGHT_KEYS),
             down=any(k in held for k in DOWN_KEYS),
+            up=any(k in held for k in UP_KEYS),
+            interact=self.interact_latch,
             jump_pressed=self.jump_latch,
             jump_held=any(k in held for k in JUMP_KEYS),
             shoot=self.mouse_down or any(k in held for k in SHOOT_KEYS),
@@ -133,9 +138,11 @@ class GameScene:
             if event.key in JUMP_KEYS:
                 self.jump_latch = True
             elif event.key == pygame.K_q:
-                self.switch_latch = -1
-            elif event.key == pygame.K_e:
                 self.switch_latch = 1
+            elif event.key == pygame.K_e:
+                self.interact_latch = True
+            elif event.key in MINIMAP_KEYS:
+                self.settings.toggle_minimap()
             elif event.key in SLOT_KEYS:
                 self.slot_latch = SLOT_KEYS.index(event.key)
         elif event.type == pygame.KEYUP:
@@ -177,6 +184,7 @@ class GameScene:
             # edge-triggered inputs only count for one step
             self.jump_latch = False
             self.switch_latch = 0
+            self.interact_latch = False
             self.slot_latch = None
             self.accumulator -= C.FIXED_DT
             self._play_sounds()
@@ -197,6 +205,8 @@ class GameScene:
         world = self.world
         self.renderer.draw(surface, world)
         draw_hud(surface, world)
+        if self.settings.minimap:
+            self.renderer.draw_minimap(surface, world)
 
         if self.banner_time < 2.5 and world.state == "playing":
             a = int(255 * min(1.0, (2.5 - self.banner_time) * 2, self.banner_time * 3))

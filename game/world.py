@@ -14,6 +14,7 @@ from .camera import Camera
 from .effects import Effects
 from .enemies import ENEMY_TYPES, Barrel, Corpse, Enemy, make_enemy
 from .level import Level, LevelDef
+from .physics import approach
 from .player import InputState, Player
 from .weapons import PICKUP_WEAPON, WEAPONS, Pickup, Projectile
 
@@ -91,6 +92,7 @@ class World:
         self.state_timer = 0.0
         self.level_time = 0.0
         self.camera = Camera(self.level.pixel_width, self.level.pixel_height)
+        self.inside_house = None
         self.camera.snap(self.player.body.cx, self.player.body.cy, self.player.facing)
 
     def restart_level(self) -> None:
@@ -183,6 +185,8 @@ class World:
         if b.on_ground and abs(b.vx) > 200 and self.rng.random() < 0.08:
             self.effects.dust(b.cx - p.facing * 8, b.bottom, 1)
 
+        self._update_doors(inp, dt)
+
         if inp.shoot:
             self._fire_player_weapon()
 
@@ -193,6 +197,59 @@ class World:
                 b.vy = -650.0
         if b.y > self.level.pixel_height + 64:
             self.kill_player()
+
+    # -------------------------------------------------------------- doors
+    def _body_in_door(self, door) -> bool:
+        dx, dy, dw, dh = door.rect
+        bodies = [self.player.body] + [e.body for e in self.enemies if e.alive]
+        return any(b.right > dx and b.left < dx + dw and b.bottom > dy and b.top < dy + dh for b in bodies)
+
+    def open_door(self, door, side: int) -> bool:
+        if door.open:
+            return False
+        door.open = True
+        door.side = side
+        self.events.append("door_open")
+        self.sfx("door")
+        return True
+
+    def close_door(self, door) -> bool:
+        if not door.open or door.broken or self._body_in_door(door):
+            return False
+        door.open = False
+        self.events.append("door_close")
+        self.sfx("door")
+        return True
+
+    def _update_doors(self, inp: InputState, dt: float) -> None:
+        p = self.player
+        b = p.body
+        level = self.level
+        # walking into a closed door opens it
+        if b.hit_left or b.hit_right:
+            side = -1 if b.hit_left else 1
+            fx = b.left - 2 if side < 0 else b.right + 2
+            tx = math.floor(fx / C.TILE)
+            for ty in range(math.floor(b.top / C.TILE), math.floor((b.bottom - 1) / C.TILE) + 1):
+                door = level.door_at.get((tx, ty))
+                if door is not None and not door.open:
+                    self.open_door(door, side)
+                    break
+        if inp.interact:
+            door = level.door_near(b.cx, b.cy)
+            if door is not None:
+                if door.open:
+                    self.close_door(door)
+                else:
+                    self.open_door(door, 1 if door.rect[0] > b.cx else -1)
+        for door in level.doors:
+            target = 1.0 if door.open else 0.0
+            door.anim = approach(door.anim, target, dt * 6)
+        # houses: reveal the interior while the player is inside
+        inside = level.house_at_point(b.cx, b.cy)
+        self.inside_house = inside
+        for h in level.houses:
+            h.reveal = approach(h.reveal, 1.0 if h is inside else 0.0, dt * 4)
 
     def _fire_player_weapon(self) -> None:
         p = self.player
@@ -310,7 +367,7 @@ class World:
         for e in self.enemies:
             if not e.alive:
                 continue
-            shots = e.update(dt, self.level, self.player, self.rng)
+            shots = e.update(dt, self.level, self.player, self.rng, self.projectiles)
             if shots:
                 self.projectiles.extend(shots)
                 self.sfx("grenade_launcher" if shots[0].kind == "grenade" else "enemy_shot")
@@ -338,7 +395,7 @@ class World:
         kd = math.hypot(knock_x, knock_y)
         dir_x, dir_y = (knock_x / kd, knock_y / kd) if kd > 1e-6 else (0.0, -1.0)
         if not quiet:
-            if self.blood and enemy.kind != "drone":
+            if self.blood:
                 self.effects.blood(hx, hy, dir_x, dir_y, int(8 + min(30, amount / 3)), 1.0 + min(1.0, amount / 100))
             else:
                 self.effects.impact(hx, hy, (255, 200, 120))
@@ -350,21 +407,15 @@ class World:
             self.hitstop = max(self.hitstop, HITSTOP_BIG if (big or explosive) else HITSTOP_KILL)
             self.events.append("enemy_killed")
             self.sfx("enemy_death")
-            if enemy.kind == "drone":
-                self.effects.burst(b.cx, b.cy, (255, 160, 60), count=26, speed=320, life=0.7, size=4, glow=True)
-                self.effects.burst(b.cx, b.cy, (60, 60, 70), count=12, speed=220, life=2.0, size=4,
-                                   gravity=1200, collide=1, kind="debris")
-            elif explosive and self.blood and amount >= 40:
-                self.effects.gibs(b.cx, b.cy, GIB_COLORS + [enemy.PALETTE["uniform"]] if enemy.human else GIB_COLORS, 12)
+            if explosive and self.blood and amount >= 40:
+                self.effects.gibs(b.cx, b.cy, GIB_COLORS + [enemy.PALETTE["uniform"]], 12)
                 self.events.append("gibbed")
-            elif enemy.human or enemy.kind == "walker":
+            else:
                 spin = (6 + kd / 60) * (1 if knock_x >= 0 else -1)
                 vx = knock_x * (1.6 if explosive else 1.0)
                 vy = min(-180.0, knock_y * (1.4 if explosive else 1.0) - 120)
                 corpse = Corpse(enemy, vx, vy, spin)
                 self.corpses.append(corpse)
-            else:
-                self.effects.burst(b.cx, b.cy, (255, 120, 60), count=26, speed=320, life=0.7, size=4, glow=True)
         elif not quiet:
             self.events.append("enemy_hit")
             self.sfx("enemy_hit")
@@ -472,6 +523,13 @@ class World:
                 nx, ny = (dx / d, dy / d) if d > 1e-6 else (0.0, -1.0)
                 self.damage_enemy(e, damage * falloff, nx * knockback * falloff,
                                   ny * knockback * falloff - 200, explosive=True)
+        for door in self.level.doors:
+            dx, dy, dw, dh = door.rect
+            if not door.broken and math.hypot(dx + dw / 2 - x, dy + dh / 2 - y) < r + dh / 2:
+                door.open = door.broken = True
+                door.side = 1 if dx > x else -1
+                self.effects.burst(dx + dw / 2, dy + dh / 2, (120, 80, 45), count=14, speed=260, life=1.6,
+                                   size=3, gravity=1200, collide=1, kind="debris")
         for bar in self.barrels:
             if bar.alive and math.hypot(bar.body.cx - x, bar.body.cy - y) < r + 12:
                 bar.take_damage(Barrel.MAX_HEALTH)
@@ -499,7 +557,7 @@ class World:
         for e in self.enemies:
             if not e.alive or not b.overlaps(e.body):
                 continue
-            stomping = b.vy > 50 and b.bottom - e.body.top < 16 and e.kind != "drone"
+            stomping = b.vy > 50 and b.bottom - e.body.top < 16
             if stomping:
                 self.damage_enemy(e, C.STOMP_DAMAGE, 0.0, 200.0)
                 b.vy = -C.STOMP_BOUNCE

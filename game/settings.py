@@ -10,12 +10,16 @@ class Settings:
     sfx: bool = True
     music: bool = True
     blood: bool = True
+    minimap: bool = True         # toggled with Tab / N in game
     muted: bool = False          # toggled with the M key
 
     VOLUME_STEP = 0.1
 
     def change_volume(self, delta: float) -> None:
         self.master_volume = round(min(1.0, max(0.0, self.master_volume + delta)), 2)
+
+    def toggle_minimap(self) -> None:
+        self.minimap = not self.minimap
 
     def toggle_mute(self) -> None:
         self.muted = not self.muted

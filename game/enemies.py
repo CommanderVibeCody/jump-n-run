@@ -1,6 +1,6 @@
-"""Enemies: blob walkers, human soldiers (rifleman, shotgunner, grenadier,
-heavy and stationary guards) and flying drones. Also explosive barrels and
-ragdoll-style corpses."""
+"""Enemies: human soldiers in nine variants, explosive barrels and
+ragdoll-style corpses. Each soldier type differs in health, speed, weapon,
+damage, fire rate and range (see ``SOLDIER_TYPES`` and the README table)."""
 from __future__ import annotations
 
 import math
@@ -53,7 +53,7 @@ class Enemy:
             return True
         return False
 
-    def update(self, dt: float, level, player, rng: random.Random) -> List[Projectile]:
+    def update(self, dt: float, level, player, rng: random.Random, projectiles=()) -> List[Projectile]:
         self.hurt_flash = max(0.0, self.hurt_flash - dt)
         self.stun = max(0.0, self.stun - dt)
         self.anim += dt
@@ -71,28 +71,6 @@ class Enemy:
         tx = math.floor(front_x / TILE)
         ty = math.floor((b.bottom + 2) / TILE)
         return not (level.is_solid(tx, ty) or level.is_one_way(tx, ty))
-
-
-class Walker(Enemy):
-    """Patrols back and forth, turning at walls and ledges."""
-
-    kind = "walker"
-    W, H = 28, 28
-    MAX_HEALTH = 50
-    CONTACT_DAMAGE = 20
-    SPEED = 75.0
-    SCORE = 100
-
-    def update(self, dt, level, player, rng):
-        super().update(dt, level, player, rng)
-        b = self.body
-        if b.on_ground and self.stun <= 0.0 and self.ledge_ahead(level):
-            self.facing *= -1
-        target = 0.0 if self.stun > 0 else self.facing * self.SPEED
-        self._fall(dt, level, target, 900.0 if self.stun <= 0 else 600.0)
-        if (b.hit_left and self.facing < 0) or (b.hit_right and self.facing > 0):
-            self.facing *= -1
-        return []
 
 
 class Soldier(Enemy):
@@ -145,7 +123,11 @@ class Soldier(Enemy):
     def shoulder(self):
         return self.body.cx, self.body.y + 14 * self.SCALE
 
-    def update(self, dt, level, player, rng):
+    def desired_vx(self, level, player) -> float:
+        """Horizontal speed while attacking (most soldiers stand still)."""
+        return 0.0
+
+    def update(self, dt, level, player, rng, projectiles=()):
         super().update(dt, level, player, rng)
         b = self.body
         self.muzzle_flash = max(0.0, self.muzzle_flash - dt)
@@ -153,7 +135,7 @@ class Soldier(Enemy):
         self.sees_player = self.can_see(level, player)
         self.cooldown = max(0.0, self.cooldown - dt)
         attacking = self.sees_player or self.windup > 0 or self.burst_left > 0
-        target_vx = 0.0
+        target_vx = self.desired_vx(level, player) if attacking and self.stun <= 0 else 0.0
         if not attacking and self.stun <= 0 and self.PATROL_SPEED > 0:
             if b.on_ground and self.ledge_ahead(level):
                 self.facing *= -1
@@ -192,7 +174,11 @@ class Soldier(Enemy):
                 shots += self.fire(player, rng)
                 if shots:
                     self.muzzle_flash = 0.06
+        self.after_update(dt, level, player, rng, projectiles)
         return shots
+
+    def after_update(self, dt, level, player, rng, projectiles) -> None:
+        pass
 
     def fire(self, player, rng) -> List[Projectile]:
         gx, gy = self.gun_pos()
@@ -205,6 +191,24 @@ class Soldier(Enemy):
             out.append(Projectile(gx, gy, a, self.BULLET_SPEED, self.BULLET_DAMAGE, "enemy",
                                   2.0 if self.PELLETS == 1 else 0.5, BULLET_COLOR, radius=4, knockback=160))
         return out
+
+
+class Recruit(Soldier):
+    """Weak beginner: low health, slow single pistol shots."""
+
+    kind = "recruit"
+    MAX_HEALTH = 40
+    SCORE = 80
+    PATROL_SPEED = 50.0
+    RANGE = 380.0
+    COOLDOWN = 1.8
+    WINDUP = 0.45
+    BURST = 1
+    BULLET_SPEED = 400.0
+    BULLET_DAMAGE = 8
+    SPREAD = 0.08
+    GUN = "pistol"
+    PALETTE = {"uniform": (120, 140, 90), "dark": (90, 105, 65), "helmet": (150, 160, 110), "skin": (235, 200, 160)}
 
 
 class Rifleman(Soldier):
@@ -231,6 +235,7 @@ class Grenadier(Soldier):
     COOLDOWN = 2.2
     BURST = 1
     WINDUP = 0.5
+    BULLET_DAMAGE = 40
     GUN = "grenade_launcher"
     SCORE = 180
     PALETTE = {"uniform": (60, 70, 85), "dark": (40, 48, 60), "helmet": (150, 40, 40), "skin": (235, 200, 160)}
@@ -245,7 +250,7 @@ class Grenadier(Soldier):
         vy = (dy - 0.5 * g * t * t) / t
         speed = math.hypot(vx, vy)
         self.aim_angle = math.atan2(vy, vx)
-        return [Projectile(gx, gy, self.aim_angle, speed, 40, "enemy", t + 0.25, (120, 200, 80), radius=5,
+        return [Projectile(gx, gy, self.aim_angle, speed, self.BULLET_DAMAGE, "enemy", t + 0.25, (120, 200, 80), radius=5,
                            knockback=400, explosion_radius=80, kind="grenade", gravity=g, bounce=0.45)]
 
 
@@ -274,6 +279,115 @@ class Heavy(Soldier):
         return super().take_damage(amount, knock_x * 0.3, knock_y * 0.3)
 
 
+class Sniper(Soldier):
+    """Long range, slow and deadly. Shows a laser sight while aiming."""
+
+    kind = "sniper"
+    MAX_HEALTH = 50
+    SCORE = 250
+    PATROL_SPEED = 25.0
+    RANGE = 800.0
+    COOLDOWN = 2.6
+    WINDUP = 1.0
+    BURST = 1
+    BULLET_SPEED = 1400.0
+    BULLET_DAMAGE = 35
+    SPREAD = 0.0
+    GUN = "sniper"
+    PALETTE = {"uniform": (95, 85, 60), "dark": (70, 62, 42), "helmet": (60, 70, 45), "skin": (225, 185, 145)}
+
+    def can_see(self, level, player) -> bool:
+        b, p = self.body, player.body
+        if abs(p.cx - b.cx) > self.RANGE or abs(p.cy - b.cy) > 320 or not player.alive:
+            return False
+        return level.line_of_sight(b.cx, b.y + 12, p.cx, p.cy)
+
+
+class Officer(Soldier):
+    """Elite: fast, keeps its distance, dodges incoming bullets, SMG bursts."""
+
+    kind = "officer"
+    MAX_HEALTH = 100
+    SCORE = 350
+    PATROL_SPEED = 110.0
+    RANGE = 440.0
+    COOLDOWN = 1.1
+    WINDUP = 0.2
+    BURST = 5
+    BURST_INTERVAL = 0.08
+    BULLET_SPEED = 620.0
+    BULLET_DAMAGE = 10
+    SPREAD = 0.07
+    GUN = "smg"
+    PALETTE = {"uniform": (40, 40, 48), "dark": (25, 25, 30), "helmet": (170, 30, 40), "skin": (235, 200, 160)}
+
+    def __init__(self, tx: int, ty: int) -> None:
+        super().__init__(tx, ty)
+        self.dodge_cooldown = 0.0
+        self.dodges = 0
+
+    def desired_vx(self, level, player) -> float:
+        dx = player.body.cx - self.body.cx
+        dist = abs(dx)
+        direction = 1 if dx > 0 else -1
+        if dist > 320:
+            want = direction * self.PATROL_SPEED
+        elif dist < 200:
+            want = -direction * self.PATROL_SPEED
+        else:
+            return 0.0
+        if self.body.on_ground and self._ledge_in(level, 1 if want > 0 else -1):
+            return 0.0
+        return want
+
+    def _ledge_in(self, level, direction: int) -> bool:
+        b = self.body
+        front_x = b.right + 2 if direction > 0 else b.left - 2
+        tx = math.floor(front_x / TILE)
+        ty = math.floor((b.bottom + 2) / TILE)
+        return not (level.is_solid(tx, ty) or level.is_one_way(tx, ty))
+
+    def after_update(self, dt, level, player, rng, projectiles) -> None:
+        self.dodge_cooldown = max(0.0, self.dodge_cooldown - dt)
+        b = self.body
+        if self.dodge_cooldown > 0 or not b.on_ground:
+            return
+        for pr in projectiles:
+            if pr.owner != "player" or not pr.alive:
+                continue
+            dx, dy = b.cx - pr.x, b.cy - pr.y
+            if abs(dy) < 50 and 0 < dx * pr.vx and abs(dx) < 160:  # bullet coming at us
+                b.vy = -640.0
+                b.vx = (1 if dx < 0 else -1) * 160.0 if rng.random() < 0.5 else b.vx
+                b.on_ground = False
+                self.dodge_cooldown = 1.4
+                self.dodges += 1
+                return
+
+
+class Rocketeer(Soldier):
+    """Fires slow rockets with splash damage."""
+
+    kind = "rocketeer"
+    MAX_HEALTH = 90
+    SCORE = 300
+    PATROL_SPEED = 40.0
+    RANGE = 600.0
+    COOLDOWN = 3.0
+    WINDUP = 0.6
+    BURST = 1
+    BULLET_SPEED = 260.0
+    BULLET_DAMAGE = 45
+    GUN = "rocket"
+    PALETTE = {"uniform": (140, 60, 50), "dark": (100, 40, 35), "helmet": (90, 50, 40), "skin": (225, 185, 145)}
+
+    def fire(self, player, rng) -> List[Projectile]:
+        gx, gy = self.gun_pos()
+        return [Projectile(gx, gy, self.aim_angle, self.BULLET_SPEED, self.BULLET_DAMAGE, "enemy", 3.0,
+                           (255, 120, 90), radius=5, knockback=420, explosion_radius=80, accel=500.0,
+                           kind="rocket")]
+
+
 class Shooter(Soldier):
     """A stationary guard that fires single shots when it sees the player."""
 
@@ -298,52 +412,9 @@ class Shooter(Soldier):
         self.cooldown = 1.0
 
 
-class Drone(Enemy):
-    """Hovers around its home point and chases the player when close."""
-
-    kind = "drone"
-    W, H = 30, 20
-    MAX_HEALTH = 35
-    CONTACT_DAMAGE = 15
-    SCORE = 120
-    SPEED = 120.0
-    RANGE = 380.0
-
-    def __init__(self, tx: int, ty: int) -> None:
-        super().__init__(tx, ty)
-        self.body.y = ty * TILE + (TILE - self.H) / 2
-        self.home = (self.body.x, self.body.y)
-        self.chasing = False
-
-    def update(self, dt, level, player, rng):
-        super().update(dt, level, player, rng)
-        b, p = self.body, player.body
-        dist = math.hypot(p.cx - b.cx, p.cy - b.cy)
-        self.chasing = (player.alive and dist < self.RANGE
-                        and level.line_of_sight(b.cx, b.cy, p.cx, p.cy))
-        if self.chasing:
-            tx, ty = p.cx - b.w / 2, p.y - 50
-        else:
-            tx = self.home[0] + math.sin(self.anim * 0.8) * 40
-            ty = self.home[1] + math.sin(self.anim * 2.1) * 10
-        dx, dy = tx - b.x, ty - b.y
-        d = math.hypot(dx, dy)
-        if d > 1:
-            speed = self.SPEED if self.chasing else 70.0
-            want_vx, want_vy = dx / d * min(speed, d * 3), dy / d * min(speed, d * 3)
-        else:
-            want_vx = want_vy = 0.0
-        rate = 300.0 if self.stun <= 0 else 150.0
-        vx = approach(b.vx, want_vx, rate * dt)
-        vy = approach(b.vy, want_vy, rate * dt)
-        integrate(b, level, (vx - b.vx) / dt, (vy - b.vy) / dt, dt)
-        if abs(b.vx) > 5:
-            self.facing = 1 if b.vx > 0 else -1
-        return []
-
-
-ENEMY_TYPES = {"w": Walker, "s": Shooter, "d": Drone, "r": Rifleman, "k": Shotgunner, "g": Grenadier,
-               "h": Heavy}
+ENEMY_TYPES = {"e": Recruit, "r": Rifleman, "k": Shotgunner, "g": Grenadier, "n": Sniper, "h": Heavy,
+               "o": Officer, "q": Rocketeer, "s": Shooter}
+SOLDIER_TYPES = list(ENEMY_TYPES.values())
 
 
 def make_enemy(kind: str, tx: int, ty: int) -> Enemy:
@@ -401,7 +472,7 @@ class Corpse:
         self.body.vx = vx
         self.body.vy = vy
         self.kind = enemy.kind
-        self.palette = getattr(enemy, "PALETTE", None)
+        self.palette = enemy.PALETTE
         self.gun = getattr(enemy, "GUN", "pistol")
         self.scale = getattr(enemy, "SCALE", 1.0)
         self.facing = enemy.facing
