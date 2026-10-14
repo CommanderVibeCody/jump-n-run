@@ -40,7 +40,10 @@ _GLOW_CACHE: Dict[Tuple, pygame.Surface] = {}
 def glow_sprite(color, radius: int) -> pygame.Surface:
     """A soft radial glow, meant to be blitted with BLEND_ADD."""
     radius = max(2, int(radius))
-    key = (tuple(color[:3]), radius)
+    if radius > 16:  # quantise so animated glows reuse cached sprites
+        radius = (radius // 6) * 6
+    color = tuple((c // 8) * 8 for c in color[:3])
+    key = (color, radius)
     surf = _GLOW_CACHE.get(key)
     if surf is None:
         surf = pygame.Surface((radius * 2, radius * 2))
@@ -78,11 +81,22 @@ def transform_points(points, ox: float, oy: float, angle: float, flip: bool, sca
 # Each entry: (x0, y0, x1, y1, brightness)
 GUN_SHAPES = {
     "pistol": [(4, -3, 17, 1, 0.75), (6, 1, 10, 7, 0.55), (16, -3, 18, 0, 1.0)],
+    "dual_pistols": [(4, -7, 16, -3, 0.8), (5, -3, 8, 2, 0.55), (6, 1, 18, 5, 0.75), (7, 5, 10, 10, 0.55)],
+    "smg": [(0, -3, 16, 2, 0.75), (16, -2, 22, 0, 1.0), (8, 2, 11, 10, 0.55), (-4, -2, 0, 1, 0.5)],
+    "sniper": [(-8, -2, 8, 3, 0.55), (6, -3, 22, 1, 0.75), (22, -2, 36, 0, 1.0), (6, -7, 16, -4, 0.9),
+               (12, 1, 15, 6, 0.5)],
+    "flamethrower": [(-6, -4, 6, 4, 0.6), (4, -3, 22, 1, 0.75), (20, -4, 26, 2, 1.0), (-2, 4, 10, 9, 0.9)],
+    "grenade_launcher": [(-4, -3, 6, 3, 0.55), (4, -5, 22, 2, 0.75), (8, 2, 16, 7, 0.9), (22, -4, 25, 1, 1.0)],
+    "railgun": [(-6, -3, 6, 3, 0.55), (4, -5, 28, -2, 0.85), (4, 0, 28, 3, 0.85), (10, -2, 26, 0, 1.2)],
+    "minigun": [(-6, -6, 8, 5, 0.55), (8, -4, 30, -2, 0.9), (8, -1, 30, 1, 0.8), (8, 2, 30, 4, 0.9),
+                (0, 5, 6, 10, 0.6)],
     "shotgun": [(-4, -2, 6, 3, 0.55), (4, -3, 27, 0, 0.8), (11, 0, 21, 3, 0.6)],
     "machinegun": [(-2, -3, 6, 2, 0.55), (4, -4, 22, 1, 0.8), (21, -3, 29, -1, 1.0), (10, 1, 14, 8, 0.6)],
     "rocket": [(-8, -5, 25, 2, 0.75), (25, -6, 28, 3, 0.95), (4, 2, 8, 8, 0.55), (8, -9, 13, -5, 0.6)],
 }
-GUN_BASE = {"pistol": (70, 72, 80), "shotgun": (110, 75, 45), "machinegun": (60, 70, 80), "rocket": (70, 95, 60)}
+GUN_BASE = {"pistol": (70, 72, 80), "shotgun": (110, 75, 45), "machinegun": (60, 70, 80), "rocket": (70, 95, 60),
+            "dual_pistols": (90, 90, 100), "smg": (55, 60, 70), "sniper": (70, 80, 60), "flamethrower": (120, 60, 40),
+            "grenade_launcher": (60, 80, 50), "railgun": (60, 70, 100), "minigun": (70, 70, 75)}
 
 
 def draw_gun(surface: pygame.Surface, kind: str, x: float, y: float, angle: float, scale: float = 1.0,
@@ -297,11 +311,65 @@ def draw_player(surface: pygame.Surface, x: float, y: float, facing: int, run_ph
         draw_gun(surface, weapon, shoulder[0], shoulder[1], aim_angle, 1.0, recoil)
 
 
+def draw_soldier(surface: pygame.Surface, x: float, y: float, facing: int, phase: float, aim: float,
+                 palette, gun: str = "machinegun", scale: float = 1.0, flash: bool = False,
+                 moving: bool = True, windup: float = 0.0) -> None:
+    """A humanoid soldier with feet centred at (x, y)."""
+    S = scale
+    uni = (255, 255, 255) if flash else palette["uniform"]
+    dark = (230, 230, 230) if flash else palette["dark"]
+    skin = (255, 255, 255) if flash else palette["skin"]
+    helmet = (255, 255, 255) if flash else palette["helmet"]
+    hip = (x, y - 18 * S)
+    swing = math.sin(phase) * 0.55 if moving else 0.0
+    for i, sign in enumerate((-1, 1)):  # back leg first
+        a = swing * sign
+        knee = (hip[0] + math.sin(a) * 10 * S, hip[1] + math.cos(a) * 9 * S)
+        bend = max(0.0, math.sin(phase + (0 if sign > 0 else math.pi))) * 0.6 if moving else 0.0
+        foot = (knee[0] + math.sin(a - bend * facing) * 9 * S, knee[1] + math.cos(a - bend) * 9 * S)
+        col = dark if i == 0 else shade(uni, 0.9)
+        pygame.draw.line(surface, col, hip, knee, max(2, int(5 * S)))
+        pygame.draw.line(surface, col, knee, foot, max(2, int(5 * S)))
+        pygame.draw.line(surface, (35, 30, 25), (foot[0] - 2 * S, foot[1]), (foot[0] + 5 * S * facing, foot[1]),
+                         max(2, int(4 * S)))
+    shoulder = (x, y - 31 * S)
+    # back arm
+    pygame.draw.line(surface, dark, shoulder, (x - facing * 4 * S, y - 20 * S), max(2, int(4 * S)))
+    torso = pygame.Rect(0, 0, int(13 * S), int(17 * S))
+    torso.midbottom = (int(x), int(y - 16 * S))
+    pygame.draw.rect(surface, uni, torso, border_radius=int(3 * S))
+    pygame.draw.line(surface, dark, (torso.left, torso.bottom - 3 * S), (torso.right - 1, torso.bottom - 3 * S),
+                     max(1, int(2 * S)))
+    pygame.draw.rect(surface, dark, (torso.left + 2 * S, torso.top + 3 * S, torso.width - 4 * S, 5 * S),
+                     border_radius=2)
+    # head with helmet
+    hx, hy = x + facing * 1.5 * S, y - 39 * S
+    pygame.draw.circle(surface, skin, (int(hx), int(hy)), int(6 * S))
+    pygame.draw.circle(surface, helmet, (int(hx), int(hy - 2 * S)), int(6.5 * S), draw_top_left=True,
+                       draw_top_right=True)
+    pygame.draw.line(surface, shade(helmet, 0.7), (hx - 7 * S, hy - 2 * S), (hx + 7 * S, hy - 2 * S), max(1, int(2 * S)))
+    pygame.draw.circle(surface, (25, 25, 30), (int(hx + facing * 3 * S), int(hy + 1 * S)), max(1, int(1.5 * S)))
+    # front arm aiming the gun
+    arm_end = (shoulder[0] + math.cos(aim) * 9 * S, shoulder[1] + math.sin(aim) * 9 * S)
+    pygame.draw.line(surface, uni, shoulder, arm_end, max(2, int(5 * S)))
+    draw_gun(surface, gun, shoulder[0], shoulder[1] + 1, aim, S)
+    if windup > 0:
+        gx, gy = shoulder[0] + math.cos(aim) * 24 * S, shoulder[1] + math.sin(aim) * 24 * S
+        blit_glow(surface, (255, 60, 90), (gx, gy), 10 + 10 * windup)
+
+
 def draw_enemy(surface: pygame.Surface, e, ox: float, oy: float, t: float) -> None:
     b = e.body
     x, y = b.x - ox, b.y - oy
     flash = e.hurt_flash > 0
-    if e.kind == "walker":
+    if getattr(e, "human", False):
+        windup = (1 - e.windup / e.WINDUP) if e.windup > 0 else 0.0
+        draw_soldier(surface, b.cx - ox, b.bottom - oy, e.facing, e.walk_phase, e.aim_angle, e.PALETTE, e.GUN,
+                     e.SCALE, flash, abs(b.vx) > 5, windup)
+        if e.muzzle_flash > 0:
+            gx, gy = e.gun_pos()
+            blit_glow(surface, (255, 220, 150), (gx - ox, gy - oy), 14)
+    elif e.kind == "walker":
         col = (255, 255, 255) if flash else (220, 90, 60)
         bob = abs(math.sin(e.anim * 9)) * 2
         r = pygame.Rect(int(x), int(y + bob), int(b.w), int(b.h - 4))
@@ -316,18 +384,6 @@ def draw_enemy(surface: pygame.Surface, e, ox: float, oy: float, t: float) -> No
             pygame.draw.circle(surface, (20, 20, 20), (int(ex + d + e.facing * 1.5), int(y + 10 + bob)), 2)
         pygame.draw.line(surface, (40, 20, 20), (ex - 8, y + 4 + bob), (ex - 1, y + 7 + bob), 2)
         pygame.draw.line(surface, (40, 20, 20), (ex + 8, y + 4 + bob), (ex + 1, y + 7 + bob), 2)
-    elif e.kind == "shooter":
-        col = (255, 255, 255) if flash else (140, 80, 200)
-        r = pygame.Rect(int(x), int(y), int(b.w), int(b.h))
-        pygame.draw.rect(surface, col, r, border_radius=6)
-        pygame.draw.rect(surface, shade(col, 0.7), (x + 3, y + b.h - 10, b.w - 6, 10), border_radius=3)
-        visor = pygame.Rect(int(x + 4 + (4 if e.facing > 0 else 0)), int(y + 7), int(b.w - 12), 7)
-        glow = 1.0 if e.windup > 0 else 0.6
-        pygame.draw.rect(surface, shade((255, 60, 90), glow + 0.2), visor, border_radius=3)
-        if e.windup > 0:
-            gx, gy = e.gun_pos()
-            blit_glow(surface, (255, 60, 90), (gx - ox, gy - oy), 14 + 10 * (1 - e.windup / e.WINDUP))
-        draw_gun(surface, "machinegun", b.cx - ox, y + 16, 0.0 if e.facing > 0 else math.pi, 0.9)
     else:  # drone
         col = (255, 255, 255) if flash else (90, 200, 170)
         cy = y + b.h / 2 + math.sin(t * 6 + e.anim) * 2
@@ -344,6 +400,57 @@ def draw_enemy(surface: pygame.Surface, e, ox: float, oy: float, t: float) -> No
         frac = e.health / e.MAX_HEALTH
         pygame.draw.rect(surface, (30, 30, 30), (x - 2, y - 10, b.w + 4, 5))
         pygame.draw.rect(surface, lerp_color((230, 60, 60), (100, 230, 100), frac), (x - 1, y - 9, (b.w + 2) * frac, 3))
+
+
+def draw_barrel(surface: pygame.Surface, bar, ox: float, oy: float, t: float) -> None:
+    b = bar.body
+    x, y = int(b.x - ox), int(b.y - oy)
+    w, h = int(b.w), int(b.h)
+    blink = bar.triggered and int(t * 30) % 2 == 0
+    col = (255, 240, 200) if (blink or bar.hurt_flash > 0) else (190, 40, 35)
+    pygame.draw.rect(surface, col, (x, y + 3, w, h - 3), border_radius=4)
+    pygame.draw.ellipse(surface, shade(col, 1.2), (x, y, w, 7))
+    for by in (y + 9, y + h - 8):
+        pygame.draw.rect(surface, shade(col, 0.6), (x, by, w, 3))
+    pygame.draw.polygon(surface, (250, 210, 40), [(x + w // 2, y + 12), (x + w // 2 - 6, y + 22), (x + w // 2 + 6, y + 22)])
+    pygame.draw.line(surface, (30, 30, 30), (x + w // 2, y + 15), (x + w // 2, y + 19), 2)
+    pygame.draw.line(surface, shade(col, 1.35), (x + 4, y + 5), (x + 4, y + h - 3), 2)
+
+
+_CORPSE_SURF = {}
+
+
+def draw_corpse(surface: pygame.Surface, c, ox: float, oy: float, t: float) -> None:
+    size = int(90 * c.scale)
+    surf = pygame.Surface((size, size), pygame.SRCALPHA)
+    cx = size / 2
+    if c.palette:
+        draw_soldier(surf, cx, cx + 21 * c.scale, c.facing, 0.0, 0.3 if c.facing > 0 else math.pi - 0.3,
+                     c.palette, c.gun, c.scale, moving=False)
+    else:  # walker blob
+        pygame.draw.rect(surf, (150, 60, 40), (cx - 14, cx - 14, 28, 26), border_radius=9)
+        for d in (-4, 4):
+            pygame.draw.line(surf, (30, 20, 20), (cx + d - 2, cx - 6), (cx + d + 2, cx - 2), 2)
+            pygame.draw.line(surf, (30, 20, 20), (cx + d + 2, cx - 6), (cx + d - 2, cx - 2), 2)
+    if c.burning:
+        surf.fill((90, 60, 50, 255), special_flags=pygame.BLEND_RGBA_MULT)
+    rot = pygame.transform.rotate(surf, -math.degrees(c.angle) * c.facing)
+    if c.life < 1.0:
+        rot.set_alpha(int(255 * max(0.0, c.life)))
+    b = c.body
+    surface.blit(rot, rot.get_rect(center=(int(b.cx - ox), int(b.bottom - 7 - oy))))
+
+
+def draw_decal(surface: pygame.Surface, d) -> None:
+    r = max(1.5, d.radius)
+    col = shade(d.color, 0.85)
+    if d.surface == "floor":
+        rect = (d.x - r * 1.6, d.y - r * 0.25, r * 3.2, r * 0.9)
+    elif d.surface == "ceiling":
+        rect = (d.x - r, d.y - r * 0.5, r * 2, r * 1.2)
+    else:
+        rect = (d.x - r * 0.45, d.y - r * 1.3, r * 0.9, r * 2.6)
+    pygame.draw.ellipse(surface, col, rect)
 
 
 def draw_pickup(surface: pygame.Surface, item, ox: float, oy: float, t: float) -> None:
@@ -420,7 +527,15 @@ class WorldRenderer:
         sx, sy = world.effects.shake_offset()
         ox, oy = int(cam.x + sx), int(cam.y + sy)
         self.background.draw(surface, cam.x, cam.y, t, world.level.pixel_height)
+        fx = world.effects
+        for d in fx.new_decals:  # stamp blood permanently into the level surface
+            draw_decal(self.level_surface, d)
+        fx.new_decals.clear()
         surface.blit(self.level_surface, (-ox, -oy))
+        for bar in getattr(world, "barrels", []):
+            draw_barrel(surface, bar, ox, oy, t)
+        for c in getattr(world, "corpses", []):
+            draw_corpse(surface, c, ox, oy, t)
 
         for cp in world.checkpoints:
             draw_checkpoint(surface, cp, ox, oy, t)
@@ -439,6 +554,17 @@ class WorldRenderer:
 
         for pr in world.projectiles:
             x, y = pr.x - ox, pr.y - oy
+            if pr.kind == "flame":
+                k = min(1.0, pr.age / pr.lifetime)
+                col = lerp_color((255, 220, 120), (200, 40, 10), k)
+                blit_glow(surface, col, (x, y), 8 + 26 * k, 1.0 - k * 0.6)
+                continue
+            if pr.kind == "grenade":
+                pygame.draw.circle(surface, (60, 90, 50), (int(x), int(y)), 5)
+                pygame.draw.circle(surface, (120, 150, 90), (int(x - 1), int(y - 2)), 2)
+                if int(pr.age * (8 + pr.age * 10)) % 2 == 0:
+                    blit_glow(surface, (255, 50, 50), (x, y - 4), 8)
+                continue
             if pr.kind == "rocket":
                 tail = (x - pr.dir_x * 16, y - pr.dir_y * 16)
                 blit_glow(surface, (255, 140, 40), tail, 16 + math.sin(t * 50) * 3)
@@ -450,16 +576,35 @@ class WorldRenderer:
                 pygame.draw.line(surface, pr.color, tail, (x, y), max(2, int(pr.radius)))
                 pygame.draw.circle(surface, (255, 255, 240), (int(x), int(y)), max(1, int(pr.radius * 0.7)))
 
-        fx = world.effects
         for part in fx.particles:
             x, y = part.x - ox, part.y - oy
             if -20 < x < self.size[0] + 20 and -20 < y < self.size[1] + 20:
                 r = max(1, int(part.size * (0.4 + 0.6 * part.t)))
-                if part.glow:
+                if part.kind == "smoke":
+                    r = max(1, int(part.size * (1.6 - part.t)))
+                    pygame.draw.circle(surface, lerp_color(part.color, (140, 140, 145), 1 - part.t), (int(x), int(y)), r)
+                elif part.kind == "casing":
+                    pygame.draw.rect(surface, part.color, (int(x) - 2, int(y) - 1, 4, 2))
+                elif part.kind in ("gib", "debris", "blood"):
+                    pygame.draw.circle(surface, part.color, (int(x), int(y)), max(1, int(part.size)))
+                elif part.glow:
                     blit_glow(surface, part.color, (x, y), r * 3, part.t)
                     pygame.draw.circle(surface, lerp_color(part.color, (255, 255, 255), 0.4), (int(x), int(y)), max(1, r // 2 + 1))
                 else:
                     pygame.draw.circle(surface, part.color, (int(x), int(y)), r)
+        for ring in fx.rings:
+            k = ring.life / ring.max_life
+            rr = int(ring.radius)
+            if rr > 2:
+                rs = pygame.Surface((rr * 2 + 8, rr * 2 + 8), pygame.SRCALPHA)
+                pygame.draw.circle(rs, (*ring.color, int(220 * k)), (rr + 4, rr + 4), rr, max(2, int(8 * k)))
+                surface.blit(rs, (ring.x - ox - rr - 4, ring.y - oy - rr - 4))
+        for bm in fx.beams:
+            k = bm.life / bm.max_life
+            a, b2 = (bm.x0 - ox, bm.y0 - oy), (bm.x1 - ox, bm.y1 - oy)
+            pygame.draw.line(surface, bm.color, a, b2, max(1, int(12 * k)))
+            pygame.draw.line(surface, (255, 255, 255), a, b2, max(1, int(5 * k)))
+            blit_glow(surface, bm.color, b2, 30 * k + 4)
         for fl in fx.flashes:
             k = fl.life / fl.max_life
             blit_glow(surface, fl.color, (fl.x - ox, fl.y - oy), fl.radius * (1.5 + (1 - k)), k)
@@ -480,21 +625,21 @@ def draw_hud(surface: pygame.Surface, world) -> None:
     p = world.player
     w, h = surface.get_size()
     # health bar
-    panel = pygame.Surface((270, 64), pygame.SRCALPHA)
+    panel = pygame.Surface((216, 64), pygame.SRCALPHA)
     pygame.draw.rect(panel, (10, 12, 24, 160), panel.get_rect(), border_radius=10)
     surface.blit(panel, (12, 12))
     draw_heart(surface, 34, 33, 20, (235, 70, 80))
     frac = max(0.0, p.health / p.max_health)
-    pygame.draw.rect(surface, (40, 40, 50), (52, 24, 200, 18), border_radius=6)
+    pygame.draw.rect(surface, (40, 40, 50), (52, 24, 150, 18), border_radius=6)
     col = lerp_color((235, 60, 60), (90, 220, 120), frac)
     if frac > 0:
-        pygame.draw.rect(surface, col, (52, 24, int(200 * frac), 18), border_radius=6)
-        pygame.draw.rect(surface, shade(col, 1.3), (56, 26, max(0, int(200 * frac) - 8), 4), border_radius=2)
-    draw_text(surface, f"{max(0, int(p.health))}", (152, 33), 22, (255, 255, 255), anchor="center", bold=True)
+        pygame.draw.rect(surface, col, (52, 24, int(150 * frac), 18), border_radius=6)
+        pygame.draw.rect(surface, shade(col, 1.3), (56, 26, max(0, int(150 * frac) - 8), 4), border_radius=2)
+    draw_text(surface, f"{max(0, int(p.health))}", (127, 33), 22, (255, 255, 255), anchor="center", bold=True)
     for i in range(world.lives):
         pygame.draw.circle(surface, (255, 214, 170), (60 + i * 22, 58), 7)
         pygame.draw.rect(surface, (220, 50, 60), (53 + i * 22, 50, 14, 4), border_radius=2)
-    draw_text(surface, "LIVES", (140, 58), 20, (200, 200, 210), anchor="midleft")
+    draw_text(surface, "LIVES", (130, 58), 20, (200, 200, 210), anchor="midleft")
 
     # score / level / time
     draw_text(surface, f"SCORE {world.score:06d}", (w - 16, 14), 30, (255, 230, 140), anchor="topright", bold=True)
@@ -502,30 +647,32 @@ def draw_hud(surface: pygame.Surface, world) -> None:
     m, s = divmod(int(world.level_time), 60)
     draw_text(surface, f"TIME {m}:{s:02d}   KILLS {world.kills}", (w - 16, 62), 22, (210, 215, 230), anchor="topright")
 
-    # weapon slots
-    slot_w, slot_h = 76, 52
-    x0 = w // 2 - (4 * slot_w + 3 * 8) // 2
-    y0 = 12
+    # weapon slots (keys 1-9, 0)
+    slot_w, slot_h, gap = 44, 46, 4
+    x0 = w // 2 - (len(WEAPON_ORDER) * (slot_w + gap) - gap) // 2
+    y0 = 10
     for i, key in enumerate(WEAPON_ORDER):
-        r = pygame.Rect(x0 + i * (slot_w + 8), y0, slot_w, slot_h)
+        r = pygame.Rect(x0 + i * (slot_w + gap), y0, slot_w, slot_h)
         owned = key in p.weapons
         current = key == p.current
         bg = pygame.Surface(r.size, pygame.SRCALPHA)
-        pygame.draw.rect(bg, (10, 12, 24, 190 if current else 130), bg.get_rect(), border_radius=8)
-        border = (255, 196, 64, 255) if current else (255, 255, 255, 50)
-        pygame.draw.rect(bg, border, bg.get_rect(), width=3 if current else 1, border_radius=8)
+        pygame.draw.rect(bg, (10, 12, 24, 200 if current else 120), bg.get_rect(), border_radius=7)
+        border = (255, 196, 64, 255) if current else (255, 255, 255, 45)
+        pygame.draw.rect(bg, border, bg.get_rect(), width=3 if current else 1, border_radius=7)
         surface.blit(bg, r.topleft)
-        draw_text(surface, str(i + 1), (r.left + 6, r.top + 4), 18, (180, 180, 190))
+        draw_text(surface, str((i + 1) % 10), (r.left + 4, r.top + 2), 16, (170, 170, 185))
         if owned:
-            draw_gun(surface, key, r.centerx - 12, r.top + 20, 0.0, 1.0)
+            draw_gun(surface, key, r.centerx - 11, r.top + 19, 0.0, 0.75)
             wpn = p.weapons[key]
             ammo = "INF" if wpn.infinite else str(wpn.ammo)
             col = (255, 255, 255) if wpn.has_ammo else (230, 80, 80)
-            draw_text(surface, ammo, (r.centerx, r.bottom - 12), 22, col, anchor="center", bold=True)
+            draw_text(surface, ammo, (r.centerx, r.bottom - 10), 18, col, anchor="center", bold=True)
         else:
-            draw_text(surface, "-", (r.centerx, r.centery), 26, (90, 90, 100), anchor="center")
+            draw_text(surface, "-", (r.centerx, r.centery + 2), 22, (90, 90, 100), anchor="center")
     spec = p.weapon.spec
-    draw_text(surface, spec.name.upper(), (w // 2, y0 + slot_h + 14), 24, spec.color, anchor="center", bold=True)
+    draw_text(surface, spec.name.upper(), (w // 2, y0 + slot_h + 13), 24, spec.color, anchor="center", bold=True)
+    if getattr(world, "muted", False):
+        draw_text(surface, "MUTED (M)", (w - 16, 84), 20, (255, 150, 150), anchor="topright")
 
 
 def draw_crosshair(surface: pygame.Surface, pos, t: float) -> None:

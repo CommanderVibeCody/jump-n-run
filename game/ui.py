@@ -63,6 +63,9 @@ class MenuList:
     ``handle_event`` returns the index of the chosen item or None.
     """
 
+    # set by the app to a callable(name) so menus can play hover/select sounds
+    sound_hook = None
+
     def __init__(self, items: Sequence[str], center: Tuple[int, int], spacing: int = 58, size: int = 46) -> None:
         self.items: List[str] = list(items)
         self.center = center
@@ -80,8 +83,20 @@ class MenuList:
 
     def move(self, delta: int) -> None:
         self.selected = (self.selected + delta) % len(self.items)
+        self._sound("hover")
+
+    @classmethod
+    def _sound(cls, name: str) -> None:
+        if cls.sound_hook is not None:
+            cls.sound_hook(name)
 
     def handle_event(self, event: pygame.event.Event) -> Optional[int]:
+        chosen = self._handle(event)
+        if chosen is not None:
+            self._sound("select")
+        return chosen
+
+    def _handle(self, event: pygame.event.Event) -> Optional[int]:
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_UP, pygame.K_w):
                 self.move(-1)
@@ -91,8 +106,9 @@ class MenuList:
                 return self.selected
         elif event.type == pygame.MOUSEMOTION:
             for i in range(len(self.items)):
-                if self.item_rect(i).collidepoint(event.pos):
+                if self.item_rect(i).collidepoint(event.pos) and self.selected != i:
                     self.selected = i
+                    self._sound("hover")
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             for i in range(len(self.items)):
                 if self.item_rect(i).collidepoint(event.pos):

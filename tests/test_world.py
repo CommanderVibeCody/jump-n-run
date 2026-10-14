@@ -79,6 +79,22 @@ def test_shipped_levels_are_valid(definition):
     assert w.state == "playing"
 
 
+def test_all_weapons_are_placed_in_the_levels():
+    from game.weapons import WEAPON_ORDER
+    kinds = set()
+    for d in LEVELS:
+        kinds |= {p.kind for p in World([d], seed=1).pickups}
+    assert set(WEAPON_ORDER[1:]) <= kinds
+
+
+def test_three_levels_with_soldiers_and_barrels():
+    assert len(LEVELS) == 3
+    for d in LEVELS:
+        w = World([d], seed=1)
+        assert any(e.human for e in w.enemies)
+        assert w.barrels
+
+
 def test_first_level_contains_all_weapon_pickups():
     w = World(LEVELS[:1], seed=1)
     assert {p.kind for p in w.pickups} >= {"shotgun", "machinegun", "rocket"}

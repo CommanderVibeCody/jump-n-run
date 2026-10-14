@@ -17,6 +17,7 @@ import pygame
 from . import constants as C
 from .levels import DAY
 from .render import ParallaxBackground, blit_glow, draw_player, lerp_color, shade
+from .settings import Settings
 from .ui import MenuList, draw_panel, draw_text, font
 
 TITLE = "JUMP 'N' RUN"
@@ -144,14 +145,14 @@ class Title:
 
 
 class MainMenu:
-    ITEMS = ["Play", "Controls", "Quit"]
-    ACTIONS = ["play", "controls", "quit"]
+    ITEMS = ["Play", "Controls", "Settings", "Quit"]
+    ACTIONS = ["play", "controls", "settings", "quit"]
 
     def __init__(self, background: MenuBackground, title: Title, size=(C.SCREEN_WIDTH, C.SCREEN_HEIGHT)) -> None:
         self.background = background
         self.title = title
         self.size = size
-        self.menu = MenuList(self.ITEMS, (size[0] // 2, int(size[1] * 0.6)), spacing=62, size=50)
+        self.menu = MenuList(self.ITEMS, (size[0] // 2, int(size[1] * 0.62)), spacing=56, size=46)
         self.time = 0.0
 
     def handle_event(self, event: pygame.event.Event) -> Optional[str]:
@@ -171,8 +172,8 @@ class MainMenu:
         self.background.draw(surface)
         self.title.draw(surface, (w // 2, 120))
         draw_text(surface, "run  -  jump  -  shoot", (w // 2, 182), 30, (230, 235, 250), anchor="center")
-        r = pygame.Rect(0, 0, 320, 230)
-        r.center = (w // 2, int(h * 0.6))
+        r = pygame.Rect(0, 0, 320, 250)
+        r.center = (w // 2, int(h * 0.62))
         draw_panel(surface, r, alpha=120)
         self.menu.draw(surface)
         a = int(160 + 90 * math.sin(self.time * 2.5))
@@ -186,8 +187,9 @@ CONTROLS = [
     ("Shoot", "Left mouse  or  J / F"),
     ("Aim", "Mouse (or facing direction)"),
     ("Switch weapon", "Q / E  or  mouse wheel"),
-    ("Select weapon", "1 - 4"),
+    ("Select weapon", "1 - 9, 0"),
     ("Pause", "Esc"),
+    ("Mute sound", "M"),
 ]
 
 
@@ -195,7 +197,7 @@ class ControlsScreen:
     def __init__(self, background: MenuBackground, size=(C.SCREEN_WIDTH, C.SCREEN_HEIGHT)) -> None:
         self.background = background
         self.size = size
-        self.menu = MenuList(["Back"], (size[0] // 2, size[1] - 60), size=44)
+        self.menu = MenuList(["Back"], (size[0] // 2, size[1] - 45), size=44)
         self.time = 0.0
 
     def handle_event(self, event: pygame.event.Event) -> Optional[str]:
@@ -211,11 +213,11 @@ class ControlsScreen:
     def draw(self, surface: pygame.Surface) -> None:
         w, h = self.size
         self.background.draw(surface)
-        panel = pygame.Rect(0, 0, 720, 400)
-        panel.midtop = (w // 2, 30)
+        panel = pygame.Rect(0, 0, 720, 430)
+        panel.midtop = (w // 2, 20)
         draw_panel(surface, panel)
-        draw_text(surface, "CONTROLS", (w // 2, 66), 60, C.ACCENT, anchor="center", bold=True)
-        y = 112
+        draw_text(surface, "CONTROLS", (w // 2, 56), 60, C.ACCENT, anchor="center", bold=True)
+        y = 98
         for i, (action, keys) in enumerate(CONTROLS):
             if i % 2 == 0:
                 row = pygame.Surface((660, 30), pygame.SRCALPHA)
@@ -227,3 +229,66 @@ class ControlsScreen:
         draw_text(surface, "Collect weapons, stomp or shoot enemies and reach the flag!",
                   (w // 2, y + 10), 24, C.DIM, anchor="center")
         self.menu.draw(surface)
+
+
+class SettingsScreen:
+    """Master volume (Left/Right), sound effects, music and blood toggles."""
+
+    def __init__(self, background: MenuBackground, settings: Settings,
+                 size=(C.SCREEN_WIDTH, C.SCREEN_HEIGHT)) -> None:
+        self.background = background
+        self.settings = settings
+        self.size = size
+        self.menu = MenuList(self.labels(), (size[0] // 2, size[1] // 2 + 30), spacing=56, size=40)
+        self.time = 0.0
+
+    def labels(self):
+        s = self.settings
+        on = lambda v: "On" if v else "Off"  # noqa: E731
+        return [f"Master Volume: < {int(round(s.master_volume * 100))}% >", f"Sound Effects: {on(s.sfx)}",
+                f"Music: {on(s.music)}", f"Blood: {on(s.blood)}", "Back"]
+
+    def refresh(self) -> None:
+        self.menu.items = self.labels()
+
+    def handle_event(self, event: pygame.event.Event) -> Optional[str]:
+        s = self.settings
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
+                return "menu"
+            if event.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_a, pygame.K_d) and self.menu.selected == 0:
+                s.change_volume(Settings.VOLUME_STEP if event.key in (pygame.K_RIGHT, pygame.K_d) else -Settings.VOLUME_STEP)
+                MenuList._sound("hover")
+                self.refresh()
+                return None
+        chosen = self.menu.handle_event(event)
+        if chosen is None:
+            return None
+        if chosen == 0:
+            s.master_volume = 0.0 if s.master_volume >= 1.0 else min(1.0, round(s.master_volume + 0.2, 2))
+        elif chosen == 1:
+            s.sfx = not s.sfx
+        elif chosen == 2:
+            s.music = not s.music
+        elif chosen == 3:
+            s.blood = not s.blood
+        else:
+            return "menu"
+        self.refresh()
+        return None
+
+    def update(self, dt: float) -> None:
+        self.time += dt
+        self.background.update(dt)
+        self.menu.update(dt)
+
+    def draw(self, surface: pygame.Surface) -> None:
+        w, h = self.size
+        self.background.draw(surface)
+        panel = pygame.Rect(0, 0, 560, 420)
+        panel.center = (w // 2, h // 2)
+        draw_panel(surface, panel)
+        draw_text(surface, "SETTINGS", (w // 2, panel.top + 46), 60, C.ACCENT, anchor="center", bold=True)
+        self.menu.draw(surface)
+        draw_text(surface, "Left/Right: volume   Enter: toggle   M: mute anywhere", (w // 2, panel.bottom - 22),
+                  22, C.DIM, anchor="center")

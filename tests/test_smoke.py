@@ -9,6 +9,7 @@ from game.levels import LEVELS
 from game.render import WorldRenderer, draw_hud
 from game.world import World
 from game.player import InputState
+from game.weapons import WEAPON_ORDER
 
 
 @pytest.fixture(scope="module")
@@ -57,7 +58,7 @@ def test_render_every_level_with_all_effects(screen):
     renderer = WorldRenderer()
     for index in range(len(LEVELS)):
         w = World(LEVELS, seed=1, start_level=index)
-        for key_ in ("shotgun", "machinegun", "rocket"):
+        for key_ in WEAPON_ORDER[1:]:
             w.player.give_weapon(key_)
         for i in range(240):
             w.step(InputState(right=True, shoot=True, jump_pressed=i % 60 == 0, jump_held=True, switch=1 if i % 40 == 0 else 0))
@@ -65,8 +66,14 @@ def test_render_every_level_with_all_effects(screen):
                 renderer.draw(screen, w)
                 draw_hud(screen, w)
         w.effects.explosion(w.player.body.cx, w.player.body.cy, 90)
+        w.effects.blood(w.player.body.cx, w.player.body.cy, 1, 0, 30)
+        for e in list(w.enemies)[:3]:
+            w.damage_enemy(e, 999, 300, -200)
+        for _ in range(30):
+            w.step()
         renderer.draw(screen, w)
         draw_hud(screen, w)
+        assert w.effects.decals or not w.effects.particles
 
 
 def test_game_over_screen_and_play_again(screen):

@@ -12,7 +12,9 @@ primitives, so there are no image assets.
 
 ![Main menu](docs/menu.png)
 
-![Gameplay](docs/gameplay.png)
+![Gameplay: soldiers, blood and corpses](docs/gameplay.png)
+
+![Barrel chain explosion with shockwave](docs/explosion.png)
 
 ![Night level](docs/night.png)
 
@@ -22,32 +24,63 @@ primitives, so there are no image assets.
   stronger fall, variable jump height (release early for a short hop),
   coyote time, jump buffering, squash & stretch.
 * **Own physics**: fixed timestep (1/120 s), exact integration for constant
-  acceleration, tile collisions resolved per axis, no tunnelling.
-* **Tile-based levels** written as ASCII maps ([`game/levels.py`](game/levels.py)):
-  solid blocks, one-way platforms you can jump through (and drop down
-  through), spikes, bottomless pits, checkpoints and a goal flag.
-  Two levels: *Green Hills* (day) and *Night Factory* (night).
-* **Smooth scrolling camera** with look-ahead, clamped to the level.
-* **Four weapons** with ammo, switching and a HUD:
-
-  | Slot | Weapon | Ammo | Notes |
-  |------|--------|------|-------|
-  | 1 | Pistol | infinite | accurate, medium fire rate |
-  | 2 | Shotgun | 12 per pickup (max 24) | 6 pellets, short range, big recoil |
-  | 3 | Machine Gun | 90 per pickup (max 180) | very fast, slight spread |
-  | 4 | Rocket Launcher | 5 per pickup (max 10) | accelerating rocket, area damage, rocket jumps |
-
-* **Enemies**: *walkers* patrol and turn at walls and ledges, *shooters*
-  fire at you when they have line of sight, *drones* fly after you.
-  Shoot them or jump on their heads.
+  acceleration, tile collisions resolved per axis, no tunnelling. Particles,
+  casings, debris, gibs, grenades and corpses all use the same tile world.
+* **Three tile-based levels** written as ASCII maps ([`game/levels.py`](game/levels.py)):
+  *Green Hills* (day), *Night Factory* (night) and *Sunset Warzone* (dense
+  fights, bunkers and barrel fields). Solid blocks, one-way platforms you can
+  jump through (and drop through), spikes, pits, checkpoints and a goal flag.
+* **Ten weapons** with ammo, switching and a HUD (see the table below).
+* **Human soldiers** drawn as animated figures (head, helmet, torso, arms,
+  legs) with a walk cycle and an arm that aims the gun at you, plus blob
+  walkers and flying drones.
+* **Explosive barrels** that chain-react, big explosions with a shockwave
+  ring, fire, smoke and bouncing debris, strong screen shake, hit-stop on
+  kills, and bullet casings ejecting from every gun.
+* **Blood** (can be switched off): drops spray in the hit direction, fall
+  with gravity and leave splatter decals on floors, walls and ceilings;
+  explosion kills burst into gibs; other kills leave ragdoll-style corpses
+  that fly back, tumble and come to rest.
+* **Procedural sound**: every sound effect and the background music loop are
+  synthesised with numpy at startup – no audio files.
 * **Health, lives, checkpoints, respawn**, health packs and ammo crates,
   score, kills and level timer.
-* **Juice**: parallax background (3 layers + sky), muzzle flashes, impact
-  sparks, explosions, dust, floating texts, screen shake.
-* **Menus**: animated start menu (Play, Controls, Quit) with a little hero
-  running and shooting in the background, pause menu on `Esc`
-  (Resume, Restart Level, Main Menu), game over / victory screens and fade
-  transitions between all screens.
+* **Menus**: animated start menu (Play, Controls, Settings, Quit), settings
+  screen, pause menu on `Esc` (Resume, Restart Level, Main Menu), game over /
+  victory screens and fade transitions.
+
+## Weapons
+
+| Key | Weapon | Ammo per pickup (max) | Map char | Notes |
+|-----|--------|-----------------------|----------|-------|
+| 1 | Pistol | infinite | – | accurate starting weapon |
+| 2 | Dual Pistols | 80 (160) | `D` | alternates two guns, fast |
+| 3 | SMG | 120 (240) | `U` | very fast, wide spread |
+| 4 | Shotgun | 12 (24) | `S` | 6 pellets, short range, big knockback |
+| 5 | Machine Gun | 90 (180) | `M` | fast and fairly accurate |
+| 6 | Sniper Rifle | 10 (20) | `N` | 120 damage, pierces up to 4 enemies |
+| 7 | Flamethrower | 150 (300) | `F` | flames pass through enemies and set them on fire |
+| 8 | Grenade Launcher | 6 (12) | `L` | bouncing grenades, 1.6 s fuse or explode on contact |
+| 9 | Rocket Launcher | 5 (10) | `R` | accelerating rocket, area damage, rocket jumps |
+| 0 | Railgun | 5 (10) | `Z` | instant beam that pierces every enemy up to a wall |
+
+When a weapon runs dry you automatically switch back to the pistol. Your own
+explosives push you around but never hurt you; enemy grenades and barrels do.
+
+## Enemies
+
+| Map char | Enemy | Behaviour |
+|----------|-------|-----------|
+| `r` | Rifleman | patrols, stops when he sees you, fires 3-round bursts |
+| `k` | Shotgunner | short range, 5-pellet blasts |
+| `g` | Grenadier | lobs bouncing grenades in a ballistic arc |
+| `h` | Heavy | slow, 240 HP, spins up a minigun and sprays bullets |
+| `s` | Guard | stationary, single aimed shots |
+| `w` | Walker | blob that patrols and hurts on contact |
+| `d` | Drone | flies after you when it has line of sight |
+| `b` | Explosive barrel | explodes when shot, chains into nearby barrels |
+
+Jump on an enemy's head to stomp it.
 
 ## Controls
 
@@ -59,9 +92,37 @@ primitives, so there are no image assets.
 | Shoot | Left mouse button, `J` or `F` |
 | Aim | Mouse (without mouse movement you shoot in the facing direction) |
 | Switch weapon | `Q` / `E` or mouse wheel |
-| Select weapon | `1` – `4` |
+| Select weapon | `1` – `9`, `0` |
+| Mute / unmute | `M` (works everywhere) |
 | Pause menu | `Esc` |
 | Menus | `↑` / `↓` + `Enter`, or the mouse |
+
+## Settings
+
+Open **Settings** from the main menu:
+
+| Setting | Default | How |
+|---------|---------|-----|
+| Master volume | 80 % | `←` / `→` (or `Enter` to step up) |
+| Sound effects | On | `Enter` toggles |
+| Music | On | `Enter` toggles |
+| Blood | On | `Enter` toggles; off replaces blood, gibs and splatter with sparks |
+
+Settings apply immediately and last until you quit the game.
+
+## Sound
+
+All audio is generated in [`game/audio.py`](game/audio.py) with numpy when
+the game starts (about 0.1 s): filtered noise bursts and pitch sweeps for
+each of the ten weapons, the empty click and reload, jump, landing,
+footsteps, pickups, enemy hits and deaths, player hurt and death,
+explosions, grenade bounces, checkpoints, the level-complete fanfare and menu
+hover/select blips. The music is a seamless 4-bar loop (bass, arpeggio, kick,
+snare, hi-hats) at 124 BPM.
+
+If there is no audio device (for example on a server or in the headless
+tests), or numpy or the mixer is unavailable, the audio system switches
+itself off and the game runs silently.
 
 ## Setup and running
 
@@ -105,7 +166,7 @@ When the environment is active, your prompt starts with `(.venv)`.
 pip install -r requirements.txt
 ```
 
-This installs `pygame` and `pytest` into the virtual environment only.
+This installs `pygame`, `numpy` (for the procedural sound) and `pytest` into the virtual environment only.
 
 ### 4. Play
 
@@ -158,10 +219,10 @@ Levels are ASCII maps in [`game/levels.py`](game/levels.py):
 | `#` | solid block | `=` | one-way platform |
 | `^` | spikes | `P` | player start |
 | `G` | goal flag | `C` | checkpoint |
-| `w` | walker enemy | `s` | shooter enemy |
-| `d` | drone enemy | `+` | health pack |
-| `S` | shotgun | `M` | machine gun |
-| `R` | rocket launcher | `a` | ammo crate |
+| `+` | health pack | `a` | ammo crate |
+| `b` | explosive barrel | | |
+
+Enemy and weapon characters are listed in the tables above.
 
 Add a new `LevelDef` to `LEVELS` and it is played after the existing ones.
 
@@ -173,21 +234,24 @@ jump-n-run/
 ├── requirements.txt
 ├── game/
 │   ├── app.py           # window, main loop, scene switching with fades
-│   ├── menu.py          # animated start menu, controls screen
+│   ├── menu.py          # animated start menu, controls and settings screens
 │   ├── game.py          # in-game scene: input, fixed timestep, pause/game over overlays
-│   ├── world.py         # game rules: player, enemies, projectiles, pickups, checkpoints, goal
+│   ├── world.py         # game rules: player, enemies, barrels, projectiles, explosions, blood, pickups
+│   ├── audio.py         # procedural sound effects and music (numpy), silent fallback
+│   ├── settings.py      # volume, sound, music and blood settings
 │   ├── player.py        # player movement (coyote time, jump buffer, variable jump) and inventory
 │   ├── physics.py       # hand-written integration and tile collision
 │   ├── weapons.py       # weapon specs, projectiles, pickups
-│   ├── enemies.py       # walker, shooter and drone AI
+│   ├── enemies.py       # soldiers (rifleman, shotgunner, grenadier, heavy, guard), walker, drone, barrels, corpses
 │   ├── level.py         # ASCII level parser and tile queries
 │   ├── levels.py        # the level maps and colour themes
 │   ├── camera.py        # smooth follow camera
-│   ├── effects.py       # particles, floating texts, screen shake
+│   ├── effects.py       # particles, blood and decals, shockwaves, beams, screen shake
 │   ├── render.py        # all drawing: parallax, tiles, characters, HUD
 │   ├── ui.py            # fonts, panels, animated menu list
 │   └── constants.py     # tuning values
-├── tests/               # pytest suite (physics, weapons, enemies, world, menus, headless smoke test)
+├── tests/               # pytest suite: physics, weapons, arsenal, enemies, action (barrels, blood),
+│                        # world, audio and settings, menus, headless smoke test
 ├── tools/
 │   └── make_screenshots.py  # renders the screenshots in docs/ headless
 └── docs/                # screenshots

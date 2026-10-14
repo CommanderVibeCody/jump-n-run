@@ -12,6 +12,7 @@ from . import constants as C
 from .level import LevelDef
 from .player import InputState
 from .render import WorldRenderer, draw_crosshair, draw_hud
+from .settings import Settings
 from .ui import MenuList, dim_screen, draw_panel, draw_text
 from .world import World
 
@@ -20,17 +21,21 @@ RIGHT_KEYS = (pygame.K_d, pygame.K_RIGHT)
 DOWN_KEYS = (pygame.K_s, pygame.K_DOWN)
 JUMP_KEYS = (pygame.K_SPACE, pygame.K_w, pygame.K_UP)
 SHOOT_KEYS = (pygame.K_j, pygame.K_f)
-SLOT_KEYS = (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4)
+SLOT_KEYS = (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5, pygame.K_6, pygame.K_7, pygame.K_8,
+             pygame.K_9, pygame.K_0)
 MOUSE_AIM_TIMEOUT = 3.0
 
 
 class GameScene:
     def __init__(self, level_defs: Optional[Sequence[LevelDef]] = None, seed: Optional[int] = None,
-                 size=(C.SCREEN_WIDTH, C.SCREEN_HEIGHT)) -> None:
+                 size=(C.SCREEN_WIDTH, C.SCREEN_HEIGHT), settings: Optional[Settings] = None,
+                 audio=None) -> None:
         self.size = size
         self.level_defs = level_defs
         self.seed = seed
-        self.world = World(level_defs, seed=seed)
+        self.settings = settings or Settings()
+        self.audio = audio
+        self.world = World(level_defs, seed=seed, blood=self.settings.blood)
         self.renderer = WorldRenderer(size)
         self.accumulator = 0.0
         self.time = 0.0
@@ -63,7 +68,7 @@ class GameScene:
 
     def restart(self, full: bool = False) -> None:
         if full:
-            self.world = World(self.level_defs, seed=self.seed)
+            self.world = World(self.level_defs, seed=self.seed, blood=self.settings.blood)
         else:
             lives, score = self.world.lives, self.world.score
             self.world.restart_level()
@@ -159,6 +164,9 @@ class GameScene:
         self.end_menu.update(dt)
         if self.game_ended:
             self.end_fade = min(1.0, self.end_fade + dt * 1.5)
+        self.world.blood = self.settings.blood
+        self.world.muted = self.settings.muted
+        self._play_sounds()
         if self.paused:
             return
         self.mouse_idle += dt
@@ -171,10 +179,17 @@ class GameScene:
             self.switch_latch = 0
             self.slot_latch = None
             self.accumulator -= C.FIXED_DT
+            self._play_sounds()
             if self.world.level_index != self._last_level:
                 self._last_level = self.world.level_index
                 self.banner_time = 0.0
                 self.flash = 1.0
+
+    def _play_sounds(self) -> None:
+        names = self.world.drain_sounds()
+        if self.audio is not None:
+            for name in names:
+                self.audio.play(name)
 
     # ---------------------------------------------------------------- draw
     def draw(self, surface: pygame.Surface) -> None:

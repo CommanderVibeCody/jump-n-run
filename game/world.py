@@ -12,13 +12,18 @@ from typing import List, Optional, Sequence
 from . import constants as C
 from .camera import Camera
 from .effects import Effects
-from .enemies import Enemy, make_enemy
+from .enemies import ENEMY_TYPES, Barrel, Corpse, Enemy, make_enemy
 from .level import Level, LevelDef
 from .player import InputState, Player
-from .weapons import WEAPONS, Pickup, Projectile
+from .weapons import PICKUP_WEAPON, WEAPONS, Pickup, Projectile
 
-PICKUP_KINDS = {"S": "shotgun", "M": "machinegun", "R": "rocket", "+": "health", "a": "ammo"}
+PICKUP_KINDS = dict(PICKUP_WEAPON, **{"+": "health", "a": "ammo"})
+ENEMY_CHARS = "".join(ENEMY_TYPES)
 HEALTH_PACK = 40
+HITSTOP_KILL = 0.045
+HITSTOP_BIG = 0.09
+BURN_DPS = 22.0
+GIB_COLORS = [(170, 20, 25), (130, 10, 15), (230, 190, 150), (90, 110, 60), (200, 30, 40)]
 
 
 class Checkpoint:
@@ -45,7 +50,7 @@ class World:
     "game_over" and "victory"."""
 
     def __init__(self, level_defs: Optional[Sequence[LevelDef]] = None, seed: Optional[int] = None,
-                 start_level: int = 0, lives: int = C.PLAYER_LIVES) -> None:
+                 start_level: int = 0, lives: int = C.PLAYER_LIVES, blood: bool = True) -> None:
         if level_defs is None:
             from .levels import LEVELS
             level_defs = LEVELS
@@ -57,6 +62,9 @@ class World:
         self.kills = 0
         self.time = 0.0
         self.events: List[str] = []
+        self.sounds: List[str] = []   # sound effects requested since the last drain
+        self.blood = blood
+        self.hitstop = 0.0
         self.load_level(start_level)
 
     # --------------------------------------------------------------- setup
@@ -70,9 +78,11 @@ class World:
             self.player.weapons = keep_player.weapons
             self.player.current = keep_player.current
             self.player.health = keep_player.health
-        self.enemies: List[Enemy] = [make_enemy(s.kind, s.tx, s.ty) for s in self.level.spawns_of("wsd")]
+        self.enemies: List[Enemy] = [make_enemy(s.kind, s.tx, s.ty) for s in self.level.spawns_of(ENEMY_CHARS)]
+        self.barrels: List[Barrel] = [Barrel(s.tx, s.ty) for s in self.level.spawns_of("b")]
+        self.corpses: List[Corpse] = []
         self.pickups: List[Pickup] = [Pickup(PICKUP_KINDS[s.kind], s.tx, s.ty)
-                                      for s in self.level.spawns_of("SMR+a")]
+                                      for s in self.level.spawns_of("".join(PICKUP_KINDS))]
         self.checkpoints = [Checkpoint(s.tx, s.ty) for s in self.level.spawns_of("C")]
         goals = self.level.spawns_of("G")
         self.goal = Goal(goals[0].tx, goals[0].ty) if goals else None
@@ -96,8 +106,11 @@ class World:
         dt = C.FIXED_DT
         inp = inp or InputState()
         self.events.clear()
+        if self.hitstop > 0:  # freeze frame after kills
+            self.hitstop -= dt
+            return
         self.time += dt
-        self.effects.update(dt)
+        self.effects.update(dt, self.level)
         p = self.player
 
         if self.state == "playing":
@@ -123,10 +136,23 @@ class World:
                     return
 
         self._update_enemies(dt)
+        self._update_barrels(dt)
         self._update_projectiles(dt)
+        for c in self.corpses:
+            c.update(dt, self.level)
+            if c.burning and self.rng.random() < 0.3:
+                self.effects.fire(c.body.cx, c.body.cy)
+        self.corpses = [c for c in self.corpses if c.life > 0 and c.body.y < self.level.pixel_height + 100]
         if self.state == "playing":
             self._check_contacts()
         self.camera.follow(self.player.body.cx, self.player.body.cy, self.player.facing, dt)
+
+    def sfx(self, name: str) -> None:
+        self.sounds.append(name)
+
+    def drain_sounds(self) -> List[str]:
+        out, self.sounds = self.sounds, []
+        return out
 
     # ------------------------------------------------------------- player
     def _update_player(self, inp: InputState, dt: float) -> None:
@@ -134,18 +160,26 @@ class World:
         if inp.switch:
             if p.cycle_weapon(inp.switch):
                 self.events.append("switch")
+                self.sfx("reload")
         if inp.select_slot is not None:
             if p.select_slot(inp.select_slot):
                 self.events.append("switch")
+                self.sfx("reload")
 
         p.update(inp, self.level, dt)
         b = p.body
         if p.just_jumped:
             self.effects.dust(b.cx, b.bottom, 5)
             self.events.append("jump")
+            self.sfx("jump")
         if p.just_landed and p.landed_speed > 300:
             self.effects.dust(b.cx, b.bottom, int(4 + p.landed_speed / 120))
             self.events.append("land")
+            self.sfx("land")
+        step = int(p.run_phase / math.pi)
+        if b.on_ground and step != getattr(self, "_last_step", step):
+            self.sfx("step")
+        self._last_step = step
         if b.on_ground and abs(b.vx) > 200 and self.rng.random() < 0.08:
             self.effects.dust(b.cx - p.facing * 8, b.bottom, 1)
 
@@ -164,24 +198,59 @@ class World:
         p = self.player
         w = p.weapon
         if not w.can_fire():
+            if w.cooldown <= 0 and not w.has_ammo:
+                self.sfx("empty")
             return
         mx, my = p.muzzle()
-        shots = w.fire(mx, my, p.aim_angle, self.rng, "player")
-        if not shots:
-            return
-        self.projectiles.extend(shots)
         spec = w.spec
-        self.effects.muzzle_flash(mx, my, p.aim_angle, spec.color, big=spec.pellets > 1 or spec.explosion_radius > 0)
+        if spec.hitscan:
+            w.consume()
+            self._fire_hitscan(mx, my, p.aim_angle, spec)
+        else:
+            shots = w.fire(mx, my, p.aim_angle, self.rng, "player")
+            if not shots:
+                return
+            self.projectiles.extend(shots)
+        if spec.kind != "flame":
+            self.effects.muzzle_flash(mx, my, p.aim_angle, spec.color,
+                                      big=spec.pellets > 1 or spec.explosion_radius > 0 or spec.damage >= 100)
+        if spec.casing:
+            sx, sy = p.shoulder()
+            self.effects.casing(sx + math.cos(p.aim_angle) * 8, sy + math.sin(p.aim_angle) * 8, p.facing, spec.casing)
         self.effects.shake(spec.shake)
         p.recoil_anim = 1.0
         p.body.vx -= math.cos(p.aim_angle) * spec.recoil
         if not p.body.on_ground:
             p.body.vy -= math.sin(p.aim_angle) * spec.recoil * 0.5
         self.events.append("shoot")
+        self.sfx(spec.key)
         if not w.has_ammo:
             self.events.append("out_of_ammo")
+            self.sfx("empty")
             self.effects.text("OUT OF AMMO", p.body.cx, p.body.y - 20, C.RED, 1.0)
             p.current = "pistol"
+
+    def _fire_hitscan(self, x: float, y: float, angle: float, spec) -> None:
+        """Railgun: an instant beam that pierces every enemy up to a wall."""
+        dx, dy = math.cos(angle), math.sin(angle)
+        hit = set()
+        ex, ey = x, y
+        for i in range(1, 400):
+            px, py = x + dx * i * 4, y + dy * i * 4
+            ex, ey = px, py
+            if self.level.solid_at(px, py):
+                break
+            for e in self.enemies:
+                if e.alive and id(e) not in hit and e.body.contains_point(px, py, 2):
+                    hit.add(id(e))
+                    self.damage_enemy(e, spec.damage, dx * spec.knockback, dy * spec.knockback - 120,
+                                      hit_x=px, hit_y=py, big=True)
+            for bar in self.barrels:
+                if bar.alive and id(bar) not in hit and bar.body.contains_point(px, py, 2):
+                    hit.add(id(bar))
+                    bar.take_damage(spec.damage)
+        self.effects.beam(x, y, ex, ey, spec.color)
+        self.effects.burst(ex, ey, spec.color, count=16, speed=300, life=0.4, glow=True)
 
     def damage_player(self, amount: float, source_x: Optional[float]) -> bool:
         """Hurt the player unless invulnerable. Returns True if damage was dealt."""
@@ -197,6 +266,9 @@ class World:
             p.body.vx = direction * 330
             p.body.vy = -380
         self.events.append("hurt")
+        self.sfx("hurt")
+        if self.blood:
+            self.effects.blood(p.body.cx, p.body.cy, (1 if source_x is None or p.body.cx >= source_x else -1), -0.3, 10)
         if p.health <= 0:
             self.kill_player()
         return True
@@ -214,7 +286,10 @@ class World:
         self.effects.burst(b.cx, b.cy, (90, 170, 255), count=40, speed=380, life=0.9, size=4, glow=True)
         self.effects.burst(b.cx, b.cy, (255, 255, 255), count=15, speed=220, life=0.5, size=3)
         self.effects.shake(0.8)
+        if self.blood:
+            self.effects.gibs(b.cx, b.cy, [(200, 30, 40), (50, 120, 230), (255, 214, 170)], 8)
         self.events.append("death")
+        self.sfx("death")
 
     def _respawn(self) -> None:
         old = self.player
@@ -233,26 +308,80 @@ class World:
     # ------------------------------------------------------------ enemies
     def _update_enemies(self, dt: float) -> None:
         for e in self.enemies:
-            if e.alive:
-                self.projectiles.extend(e.update(dt, self.level, self.player, self.rng))
-        dead = [e for e in self.enemies if not e.alive]
-        if dead:
+            if not e.alive:
+                continue
+            shots = e.update(dt, self.level, self.player, self.rng)
+            if shots:
+                self.projectiles.extend(shots)
+                self.sfx("grenade_launcher" if shots[0].kind == "grenade" else "enemy_shot")
+                gx, gy = shots[0].x, shots[0].y
+                self.effects.muzzle_flash(gx, gy, math.atan2(shots[0].vy, shots[0].vx), (255, 120, 120))
+                if e.human and shots[0].kind != "grenade":
+                    self.effects.casing(e.body.cx, e.body.y + 16, e.facing)
+            if e.burn > 0 and e.alive:
+                e.burn -= dt
+                if self.rng.random() < 0.5:
+                    self.effects.fire(e.body.cx + self.rng.uniform(-8, 8), e.body.cy + self.rng.uniform(-10, 10))
+                self.damage_enemy(e, BURN_DPS * dt, quiet=True)
+        if any(not e.alive for e in self.enemies):
             self.enemies = [e for e in self.enemies if e.alive]
 
-    def damage_enemy(self, enemy: Enemy, amount: float, knock_x: float = 0.0, knock_y: float = 0.0) -> bool:
+    def damage_enemy(self, enemy: Enemy, amount: float, knock_x: float = 0.0, knock_y: float = 0.0,
+                     hit_x: Optional[float] = None, hit_y: Optional[float] = None, quiet: bool = False,
+                     big: bool = False, explosive: bool = False) -> bool:
+        if not enemy.alive:
+            return False
         killed = enemy.take_damage(amount, knock_x, knock_y)
         b = enemy.body
+        hx = b.cx if hit_x is None else hit_x
+        hy = b.cy if hit_y is None else hit_y
+        kd = math.hypot(knock_x, knock_y)
+        dir_x, dir_y = (knock_x / kd, knock_y / kd) if kd > 1e-6 else (0.0, -1.0)
+        if not quiet:
+            if self.blood and enemy.kind != "drone":
+                self.effects.blood(hx, hy, dir_x, dir_y, int(8 + min(30, amount / 3)), 1.0 + min(1.0, amount / 100))
+            else:
+                self.effects.impact(hx, hy, (255, 200, 120))
         if killed:
             self.kills += 1
             self.score += enemy.SCORE
-            self.effects.burst(b.cx, b.cy, (255, 120, 60), count=26, speed=320, life=0.7, size=4, glow=True)
-            self.effects.burst(b.cx, b.cy, (60, 60, 70), count=12, speed=200, life=1.0, size=5, gravity=900)
             self.effects.text(f"+{enemy.SCORE}", b.cx, b.y - 10, C.ACCENT, 0.9)
-            self.effects.shake(0.25)
+            self.effects.shake(0.35)
+            self.hitstop = max(self.hitstop, HITSTOP_BIG if (big or explosive) else HITSTOP_KILL)
             self.events.append("enemy_killed")
-        else:
+            self.sfx("enemy_death")
+            if enemy.kind == "drone":
+                self.effects.burst(b.cx, b.cy, (255, 160, 60), count=26, speed=320, life=0.7, size=4, glow=True)
+                self.effects.burst(b.cx, b.cy, (60, 60, 70), count=12, speed=220, life=2.0, size=4,
+                                   gravity=1200, collide=1, kind="debris")
+            elif explosive and self.blood and amount >= 40:
+                self.effects.gibs(b.cx, b.cy, GIB_COLORS + [enemy.PALETTE["uniform"]] if enemy.human else GIB_COLORS, 12)
+                self.events.append("gibbed")
+            elif enemy.human or enemy.kind == "walker":
+                spin = (6 + kd / 60) * (1 if knock_x >= 0 else -1)
+                vx = knock_x * (1.6 if explosive else 1.0)
+                vy = min(-180.0, knock_y * (1.4 if explosive else 1.0) - 120)
+                corpse = Corpse(enemy, vx, vy, spin)
+                self.corpses.append(corpse)
+            else:
+                self.effects.burst(b.cx, b.cy, (255, 120, 60), count=26, speed=320, life=0.7, size=4, glow=True)
+        elif not quiet:
             self.events.append("enemy_hit")
+            self.sfx("enemy_hit")
         return killed
+
+    def _update_barrels(self, dt: float) -> None:
+        for bar in self.barrels:
+            if not bar.alive:
+                continue
+            if bar.triggered and self.rng.random() < 0.6:
+                self.effects.fire(bar.body.cx, bar.body.y)
+            if bar.update(dt, self.level):
+                self.explode_at(bar.body.cx, bar.body.cy, Barrel.RADIUS, Barrel.DAMAGE, 520, "barrel")
+                self.effects.burst(bar.body.cx, bar.body.cy, [(200, 50, 40), (90, 90, 90)], count=10,
+                                   speed=500, life=2.5, size=4, gravity=1400, collide=1, kind="debris")
+                self.events.append("barrel_exploded")
+        self.barrels = [bar for bar in self.barrels if bar.alive]
 
     # -------------------------------------------------------- projectiles
     def _update_projectiles(self, dt: float) -> None:
@@ -260,40 +389,79 @@ class World:
             if not pr.alive:
                 continue
             pr.update(dt, self.level)
-            if pr.kind == "rocket" and self.rng.random() < 0.7:
+            if pr.kind == "rocket" and self.rng.random() < 0.8:
                 self.effects.smoke(pr.x - pr.dir_x * 10, pr.y - pr.dir_y * 10)
+            elif pr.kind == "grenade":
+                if pr.bounced:
+                    self.sfx("bounce")
+                if self.rng.random() < 0.3:
+                    self.effects.smoke(pr.x, pr.y)
+            elif pr.kind == "flame" and self.rng.random() < 0.25:
+                self.effects.fire(pr.x, pr.y)
             if not pr.alive:
-                if pr.hit_wall:
+                if pr.explosive and (pr.hit_wall or pr.expired):
+                    self.explode(pr)
+                elif pr.hit_wall and pr.kind != "flame":
+                    self.effects.impact(pr.x - pr.dir_x * 3, pr.y - pr.dir_y * 3, pr.color)
+                continue
+            # barrels can be shot by anyone
+            for bar in self.barrels:
+                if bar.alive and id(bar) not in pr.hit_ids and bar.body.contains_point(pr.x, pr.y, pr.radius):
                     if pr.explosive:
+                        pr.alive = False
                         self.explode(pr)
-                    else:
-                        self.effects.impact(pr.x - pr.dir_x * 3, pr.y - pr.dir_y * 3, pr.color)
+                        break
+                    bar.take_damage(pr.damage)
+                    pr.hit_ids.add(id(bar))
+                    self.effects.impact(pr.x, pr.y, (255, 200, 120))
+                    if pr.pierce <= 0:
+                        pr.alive = False
+                        break
+                    pr.pierce -= 1
+            if not pr.alive:
                 continue
             if pr.owner == "player":
                 for e in self.enemies:
-                    if e.alive and e.body.contains_point(pr.x, pr.y, pr.radius):
+                    if not e.alive or id(e) in pr.hit_ids or not e.body.contains_point(pr.x, pr.y, pr.radius):
+                        continue
+                    if pr.explosive:
                         pr.alive = False
-                        if pr.explosive:
-                            self.explode(pr)
-                        else:
-                            self.effects.impact(pr.x, pr.y, (255, 200, 120))
-                            self.damage_enemy(e, pr.damage, pr.dir_x * pr.knockback, -60.0)
+                        self.explode(pr)
                         break
+                    pr.hit_ids.add(id(e))
+                    if pr.burn > 0:
+                        e.burn = max(e.burn, pr.burn)
+                    self.damage_enemy(e, pr.damage, pr.dir_x * pr.knockback, -60.0, pr.x, pr.y,
+                                      quiet=pr.kind == "flame", big=pr.damage >= 100)
+                    if pr.pierce <= 0:
+                        pr.alive = False
+                        break
+                    pr.pierce -= 1
             elif self.state == "playing" and self.player.alive:
                 if self.player.body.contains_point(pr.x, pr.y, pr.radius):
                     pr.alive = False
-                    self.effects.impact(pr.x, pr.y, pr.color)
-                    self.damage_player(pr.damage, pr.x - pr.dir_x * 10)
+                    if pr.explosive:
+                        self.explode(pr)
+                    else:
+                        self.effects.impact(pr.x, pr.y, pr.color)
+                        self.damage_player(pr.damage, pr.x - pr.dir_x * 10)
         self.projectiles = [pr for pr in self.projectiles if pr.alive]
 
     def explode(self, pr: Projectile) -> None:
-        """Rocket explosion: area damage with linear falloff and knockback.
+        x, y = pr.x - pr.dir_x * 4, pr.y - pr.dir_y * 4
+        if self.level.solid_at(x, y):
+            x, y = pr.prev_x, pr.prev_y
+        self.explode_at(x, y, pr.explosion_radius, pr.damage, pr.knockback, pr.owner)
 
-        The player is not damaged by their own rockets but gets pushed away
-        (rocket jumps are allowed)."""
-        x, y, r = pr.x - pr.dir_x * 4, pr.y - pr.dir_y * 4, pr.explosion_radius
+    def explode_at(self, x: float, y: float, r: float, damage: float, knockback: float, source: str) -> None:
+        """Area damage with linear falloff, knockback and a shockwave.
+
+        Player explosives never hurt the player (rocket jumps are allowed);
+        enemy grenades and barrels do."""
         self.effects.explosion(x, y, r)
         self.events.append("explosion")
+        self.sfx("explosion")
+        self.hitstop = max(self.hitstop, 0.03)
         for e in list(self.enemies):
             if not e.alive:
                 continue
@@ -302,18 +470,24 @@ class World:
             if d < r + e.body.w / 2:
                 falloff = max(0.3, 1.0 - d / (r + e.body.w / 2))
                 nx, ny = (dx / d, dy / d) if d > 1e-6 else (0.0, -1.0)
-                self.damage_enemy(e, pr.damage * falloff, nx * pr.knockback * falloff,
-                                  ny * pr.knockback * falloff - 150)
+                self.damage_enemy(e, damage * falloff, nx * knockback * falloff,
+                                  ny * knockback * falloff - 200, explosive=True)
+        for bar in self.barrels:
+            if bar.alive and math.hypot(bar.body.cx - x, bar.body.cy - y) < r + 12:
+                bar.take_damage(Barrel.MAX_HEALTH)
+                bar.body.vy -= 150
         p = self.player
         if p.alive:
             dx, dy = p.body.cx - x, p.body.cy - y
             d = math.hypot(dx, dy)
             if d < r * 1.1:
-                push = (1.0 - d / (r * 1.1)) * 900
+                k = 1.0 - d / (r * 1.1)
                 nx, ny = (dx / d, dy / d) if d > 1e-6 else (0.0, -1.0)
-                p.body.vx += nx * push
-                p.body.vy += ny * push
+                p.body.vx += nx * 900 * k
+                p.body.vy += ny * 900 * k
                 p.body.on_ground = False
+                if source != "player":
+                    self.damage_player(max(8.0, damage * 0.45 * k), None)
 
     # ------------------------------------------------------------ contacts
     def _check_contacts(self) -> None:
@@ -327,7 +501,7 @@ class World:
                 continue
             stomping = b.vy > 50 and b.bottom - e.body.top < 16 and e.kind != "drone"
             if stomping:
-                self.damage_enemy(e, C.STOMP_DAMAGE, 0.0, 0.0)
+                self.damage_enemy(e, C.STOMP_DAMAGE, 0.0, 200.0)
                 b.vy = -C.STOMP_BOUNCE
                 p.jumping = False
                 self.effects.dust(b.cx, b.bottom, 8)
@@ -349,6 +523,7 @@ class World:
                 self.effects.burst(cp.x + 8, cp.y + 8, C.GREEN, count=20, speed=200, life=0.6, glow=True)
                 self.effects.text("CHECKPOINT", cp.x + 8, cp.y - 10, C.GREEN, 1.2)
                 self.events.append("checkpoint")
+                self.sfx("checkpoint")
         # goal
         if self.goal and _box_overlap(b, self.goal.x, self.goal.y, self.goal.w, self.goal.h):
             self.state = "level_complete"
@@ -360,6 +535,7 @@ class World:
                 self.effects.burst(self.goal.x + 16, self.goal.y + 10, [(255, 220, 90), (120, 220, 255),
                                    (255, 120, 200)][i % 3], count=20, speed=350, life=1.2, glow=True)
             self.events.append("level_complete")
+            self.sfx("level_complete")
 
     def _collect(self, item: Pickup) -> None:
         p = self.player
@@ -384,6 +560,7 @@ class World:
         self.score += 25
         self.effects.burst(item.cx, item.cy, (255, 255, 200), count=14, speed=180, life=0.4, glow=True)
         self.events.append("pickup")
+        self.sfx("weapon_pickup" if item.is_weapon else "pickup")
 
 
 def _box_overlap(b, x: float, y: float, w: float, h: float) -> bool:

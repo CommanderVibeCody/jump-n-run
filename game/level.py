@@ -5,8 +5,12 @@ Legend::
     #   solid block             =   one-way platform (jump through from below)
     ^   spikes (hurt)           P   player start
     G   goal flag               C   checkpoint
-    w   walker enemy            s   shooter enemy          d   drone enemy
-    S   shotgun pickup          M   machine gun pickup     R   rocket launcher
+    w   walker (blob) enemy     s   guard (stationary)     d   drone enemy
+    r   rifleman soldier        k   shotgunner soldier     g   grenadier soldier
+    h   heavy soldier (minigun) b   explosive barrel
+    D   dual pistols            U   SMG                    S   shotgun
+    M   machine gun             N   sniper rifle           F   flamethrower
+    L   grenade launcher        R   rocket launcher        Z   railgun
     +   health pack             a   ammo crate
 
 Everything outside the map to the left and right counts as solid wall,
@@ -23,7 +27,7 @@ from .constants import TILE
 SOLID = "#"
 ONE_WAY = "="
 SPIKE = "^"
-ENTITY_CHARS = set("PGCwsdSMR+a")
+ENTITY_CHARS = set("PGCwsdrkghb+aDUSMNFLRZ")
 
 
 @dataclass(frozen=True)

@@ -5,7 +5,7 @@ import pytest
 
 from game import constants as C
 from game.player import InputState
-from game.weapons import MACHINE_GUN, PISTOL, ROCKET, SHOTGUN, WEAPONS, Projectile, Weapon
+from game.weapons import MACHINE_GUN, PISTOL, ROCKET, SHOTGUN, WEAPON_ORDER, WEAPONS, Projectile, Weapon
 from game.level import Level
 from helpers import make_world, settle, steps
 
@@ -120,7 +120,7 @@ def test_empty_weapon_cannot_fire_and_player_falls_back_to_pistol():
     assert p.weapons["rocket"].ammo == 0
     assert p.current == "pistol"
     assert not p.weapons["rocket"].can_fire()
-    assert not p.select_slot(3)  # cannot select an empty weapon
+    assert not p.select_slot(WEAPON_ORDER.index("rocket"))  # cannot select an empty weapon
 
 
 def test_weapon_switching_cycles_owned_weapons():
@@ -137,7 +137,7 @@ def test_weapon_switching_cycles_owned_weapons():
     assert p.current == "pistol"
     w.step(InputState(switch=-1))
     assert p.current == "rocket"
-    w.step(InputState(select_slot=1))
+    w.step(InputState(select_slot=WEAPON_ORDER.index("shotgun")))
     assert p.current == "shotgun"
 
 
@@ -172,5 +172,7 @@ def test_mouse_aim_sets_shot_direction():
 
 
 def test_all_weapons_are_defined():
-    assert set(WEAPONS) == {"pistol", "shotgun", "machinegun", "rocket"}
+    assert set(WEAPONS) == {"pistol", "dual_pistols", "smg", "shotgun", "machinegun", "sniper",
+                            "flamethrower", "grenade_launcher", "rocket", "railgun"}
+    assert WEAPON_ORDER[0] == "pistol" and len(WEAPON_ORDER) == 10
     assert MACHINE_GUN.cooldown < PISTOL.cooldown < SHOTGUN.cooldown

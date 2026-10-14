@@ -25,9 +25,9 @@ def run(app, seconds, screen=None):
 def test_menu_navigation_wraps_around():
     app = App(seed=1)
     menu = app.menu.menu
-    assert menu.items == ["Play", "Controls", "Quit"]
+    assert menu.items == ["Play", "Controls", "Settings", "Quit"]
     app.handle_event(key(pygame.K_UP))
-    assert menu.selected == 2
+    assert menu.selected == 3
     app.handle_event(key(pygame.K_DOWN))
     assert menu.selected == 0
 
@@ -94,3 +94,43 @@ def test_transition_blocks_input_while_fading_out():
     assert app.transitioning
     app.handle_event(key(pygame.K_DOWN))
     assert app.menu.menu.selected == 0
+
+
+def test_settings_screen_toggles_and_volume():
+    app = App(seed=1)
+    run(app, 0.5)
+    app.handle_event(key(pygame.K_DOWN))
+    app.handle_event(key(pygame.K_DOWN))
+    app.handle_event(key(pygame.K_RETURN))
+    run(app, 1.0)
+    assert app.scene_name == "settings"
+    s = app.settings
+    v = s.master_volume
+    app.handle_event(key(pygame.K_LEFT))
+    assert s.master_volume == pytest.approx(v - 0.1)
+    for flag in ("sfx", "music", "blood"):
+        app.handle_event(key(pygame.K_DOWN))
+        before = getattr(s, flag)
+        app.handle_event(key(pygame.K_RETURN))
+        assert getattr(s, flag) is (not before)
+    assert "Blood: Off" in app.settings_screen.menu.items
+    app.handle_event(key(pygame.K_ESCAPE))
+    run(app, 1.0)
+    assert app.scene_name == "menu"
+
+
+def test_blood_setting_reaches_the_game():
+    app = App(seed=1)
+    app.settings.blood = False
+    app.go("game")
+    run(app, 1.0)
+    assert app.game.world.blood is False
+
+
+def test_m_key_toggles_mute():
+    app = App(seed=1)
+    assert not app.settings.muted
+    app.handle_event(key(pygame.K_m))
+    assert app.settings.muted
+    app.handle_event(key(pygame.K_m))
+    assert not app.settings.muted

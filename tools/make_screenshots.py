@@ -55,28 +55,53 @@ def main() -> None:
     app.draw(screen)
     pygame.image.save(screen, os.path.join(OUT, "controls.png"))
 
-    # gameplay: let the bot play level 1 with the machine gun until a fight
+    app.go("settings")
+    for _ in range(80):
+        app.update(1 / 60)
+    app.draw(screen)
+    pygame.image.save(screen, os.path.join(OUT, "settings.png"))
+
+    # gameplay: the bot fights through the warzone level with the SMG
     scene = GameScene(seed=4)
     world = scene.world
-    world.player.give_weapon("machinegun")
-    world.player.give_weapon("shotgun")
-    world.player.current = "machinegun"
+    world.load_level(2)
+    for key in ("smg", "shotgun", "grenade_launcher", "railgun", "flamethrower"):
+        world.player.give_weapon(key)
+    world.player.current = "smg"
     state = {}
-    shot_taken = False
-    for i in range(120 * 40):
+    for i in range(120 * 60):
         world.step(autoplay_input(world, state))
-        scene.banner_time = 10.0
-        scene.flash = 0.0
-        if not shot_taken and i > 600 and world.enemies and len(world.projectiles) > 3:
-            near = [e for e in world.enemies if abs(e.body.cx - world.player.body.cx) < 260]
-            if near and len(world.effects.particles) > 40:
-                scene.draw(screen)
-                pygame.image.save(screen, os.path.join(OUT, "gameplay.png"))
-                shot_taken = True
-                break
-    if not shot_taken:
-        scene.draw(screen)
-        pygame.image.save(screen, os.path.join(OUT, "gameplay.png"))
+        if i > 240 and len(world.effects.decals) > 25 and world.corpses and world.player.alive \
+                and world.player.invulnerable <= 0 and any(abs(e.body.cx - world.player.body.cx) < 300 for e in world.enemies):
+            break
+    scene.banner_time = 10.0
+    scene.flash = 0.0
+    scene.draw(screen)
+    pygame.image.save(screen, os.path.join(OUT, "gameplay.png"))
+
+    # explosion: shoot a group of barrels with the grenade launcher
+    scene3 = GameScene(seed=6)
+    w3 = scene3.world
+    w3.load_level(2)
+    w3.player.give_weapon("grenade_launcher")
+    w3.player.body.x = 58 * TILE
+    w3.player.body.y = 16 * TILE
+    w3.camera.snap(w3.player.body.cx, w3.player.body.cy, 1)
+    for i in range(120 * 6):
+        w3.step(InputState())
+        if i == 30:
+            for b in w3.barrels:
+                if 60 * TILE < b.body.x < 70 * TILE:
+                    b.take_damage(100)
+                    break
+        if "barrel_exploded" in w3.events and i > 40:
+            for _ in range(10):
+                w3.step(InputState())
+            break
+    scene3.banner_time = 10.0
+    scene3.flash = 0.0
+    scene3.draw(screen)
+    pygame.image.save(screen, os.path.join(OUT, "explosion.png"))
 
     # pause menu on top of the same frame
     scene.paused = True

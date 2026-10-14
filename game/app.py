@@ -9,20 +9,28 @@ import pygame
 from . import constants as C
 from .game import GameScene
 from .level import LevelDef
-from .menu import ControlsScreen, MainMenu, MenuBackground, Title
+from .audio import Audio
+from .menu import ControlsScreen, MainMenu, MenuBackground, SettingsScreen, Title
+from .settings import Settings
+from .ui import MenuList
 
 FADE_TIME = 0.35  # seconds for each half of a transition (out, then in)
-SCENES = ("menu", "controls", "game")
+SCENES = ("menu", "controls", "settings", "game")
 
 
 class App:
-    def __init__(self, seed: Optional[int] = None, level_defs: Optional[Sequence[LevelDef]] = None) -> None:
+    def __init__(self, seed: Optional[int] = None, level_defs: Optional[Sequence[LevelDef]] = None,
+                 settings: Optional[Settings] = None, audio: Optional[Audio] = None) -> None:
         self.size = (C.SCREEN_WIDTH, C.SCREEN_HEIGHT)
         self.seed = seed
         self.level_defs = level_defs
+        self.settings = settings or Settings()
+        self.audio = audio if audio is not None else Audio(self.settings)
+        MenuList.sound_hook = self.audio.play
         self.background = MenuBackground(self.size, seed)
         self.menu = MainMenu(self.background, Title(), self.size)
         self.controls = ControlsScreen(self.background, self.size)
+        self.settings_screen = SettingsScreen(self.background, self.settings, self.size)
         self.game: Optional[GameScene] = None
         self.scene_name = "menu"
         self.scene = self.menu
@@ -44,7 +52,7 @@ class App:
 
     def _switch(self, name: str) -> None:
         if name == "game":
-            self.game = GameScene(self.level_defs, self.seed, self.size)
+            self.game = GameScene(self.level_defs, self.seed, self.size, self.settings, self.audio)
             self.scene = self.game
         elif name == "menu":
             self.game = None
@@ -53,6 +61,10 @@ class App:
             pygame.mouse.set_visible(True)
         elif name == "controls":
             self.scene = self.controls
+        elif name == "settings":
+            self.settings_screen.menu.selected = 0
+            self.settings_screen.refresh()
+            self.scene = self.settings_screen
         self.scene_name = name
 
     def perform(self, action: Optional[str]) -> None:
@@ -68,6 +80,10 @@ class App:
     def handle_event(self, event: pygame.event.Event) -> None:
         if event.type == pygame.QUIT:
             self.running = False
+            return
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_m:
+            self.settings.toggle_mute()
+            self.audio.apply_settings()
             return
         if self.transitioning:
             return
@@ -86,6 +102,7 @@ class App:
             if self.fade <= 0.0:
                 self.fade_dir = 0
         self.scene.update(dt)
+        self.audio.update(dt)
 
     def draw(self, screen: pygame.Surface) -> None:
         self.scene.draw(screen)
@@ -97,6 +114,10 @@ class App:
 
 
 def run() -> None:
+    try:
+        pygame.mixer.pre_init(22050, -16, 2, 512)
+    except Exception:
+        pass
     pygame.init()
     pygame.display.set_caption("Jump 'n' Run")
     screen = pygame.display.set_mode((C.SCREEN_WIDTH, C.SCREEN_HEIGHT))
